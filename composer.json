@@ -1,0 +1,31 @@
+{
+    "name": "luany/framework",
+    "description": "Luany Framework — Compiler-grade PHP MVC framework. Integrates luany/core and luany/lte.",
+    "type": "library",
+    "license": "MIT",
+    "keywords": ["php", "framework", "mvc", "ast", "compiler", "luany"],
+    "homepage": "https://github.com/luany-ecosystem/luany-framework",
+    "require": {
+        "php": ">=8.1",
+        "luany/core": "^1.0",
+        "luany/lte": "^1.0",
+        "vlucas/phpdotenv": "^5.6"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^11.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "Luany\\Framework\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Luany\\Framework\\Tests\\": "tests/"
+        }
+    },
+    "config": {
+        "optimize-autoloader": true
+    },
+    "minimum-stability": "stable"
+}
