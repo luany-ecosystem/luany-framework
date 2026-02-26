@@ -3,7 +3,22 @@
     "description": "Luany Framework — Compiler-grade PHP MVC framework. Integrates luany/core and luany/lte.",
     "type": "library",
     "license": "MIT",
-    "keywords": ["php", "framework", "mvc", "ast", "compiler", "luany"],
+    "authors": [
+        {
+            "name": "António Ambrósio Ngola",
+            "email": "antoniongola.dev@gmail.com",
+            "homepage": "https://github.com/luany-ecosystem",
+            "role": "Lead Engineer"
+        }
+    ],
+    "keywords": [
+        "php",
+        "framework",
+        "mvc",
+        "ast",
+        "compiler",
+        "luany"
+    ],
     "homepage": "https://github.com/luany-ecosystem/luany-framework",
     "require": {
         "php": ">=8.1",
