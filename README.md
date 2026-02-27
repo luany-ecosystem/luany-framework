@@ -2,6 +2,16 @@
 
 > Compiler-grade PHP MVC framework. Integrates luany/core and luany/lte.
 
+## Why Luany?
+
+- **Clean separation** — runtime (core) is independent of the framework layer
+- **AST-driven templates** — LTE compiles views into optimised PHP via AST transformation, no regex parsing, deterministic output
+- **Explicit lifecycle** — boot / handle / terminate, nothing hidden
+- **Extensible without touching the kernel** — Service Providers as the official extension mechanism
+- **Minimal surface area** — only what is differential is built; generic infrastructure is delegated
+
+> ⚠️ Luany is currently in `v0.x`. Core contracts are stable; higher-level APIs may evolve before `v1.0`.
+
 ## Installation
 
 ```bash
@@ -27,6 +37,14 @@ Request::fromGlobals()
         └─ Kernel::terminate()
 ```
 
+## Design Principles
+
+- Build only what is differential
+- Keep core independent of the framework
+- Framework orchestrates — never owns business logic
+- Explicit lifecycle over magic
+- Extensible without modifying the kernel
+
 ## Bootstrap (public/index.php)
 
 ```php
@@ -39,6 +57,8 @@ use Luany\Core\Http\Request;
 $app = new Application(__DIR__ . '/..');
 
 Env::load($app->basePath());
+
+$app->register(new DatabaseServiceProvider());
 
 $kernel   = $app->make(\Luany\Framework\Http\Kernel::class);
 $kernel->boot();
@@ -69,10 +89,10 @@ $app->instance('config', $config);
 // Resolve
 $db = $app->make('db');
 
-// Helpers
-app('db');          // same as $app->make('db')
-app();              // Application instance
-base_path('config/app.php');
+// Global helpers
+app('db');                       // resolve from container
+app();                           // Application instance
+base_path('config/app.php');     // absolute path
 ```
 
 ## Service Providers
@@ -97,28 +117,21 @@ class DatabaseServiceProvider extends ServiceProvider
 
     public function boot(Application $app): void
     {
-        // All providers are registered — safe to call make()
-        // Run migrations check, register observers, etc.
+        // All providers are registered — safe to call make() here
     }
 }
 ```
 
-Register providers before calling `$kernel->boot()`:
+Register providers before `$kernel->boot()`:
 
 ```php
-$app = new Application(__DIR__ . '/..');
 $app->register(new DatabaseServiceProvider());
 $app->register(new MailServiceProvider());
 
-$kernel = $app->make(\Luany\Framework\Http\Kernel::class);
-$kernel->boot(); // calls bootProviders() internally
+$kernel->boot(); // calls boot() on all providers internally
 ```
 
-**Lifecycle:**
-1. `$app->register($provider)` — calls `register()` immediately
-2. `$kernel->boot()` — calls `boot()` on all registered providers
-
-All `register()` calls complete before any `boot()` runs — safe for cross-provider dependencies.
+**Lifecycle guarantee:** all `register()` calls complete before any `boot()` runs — cross-provider dependencies are always safe in `boot()`.
 
 ## HTTP Kernel
 
@@ -128,16 +141,14 @@ Extend the Kernel to add global middleware and customise the routes file:
 namespace App\Http;
 
 use Luany\Framework\Http\Kernel as BaseKernel;
-use App\Middleware\AuthMiddleware;
 
 class Kernel extends BaseKernel
 {
     // Applied to every request before routing
     protected array $middleware = [
-        // AuthMiddleware::class,
+        App\Middleware\AuthMiddleware::class,
     ];
 
-    // Path relative to routes/ directory
     protected string $routesFile = 'routes/http.php';
 }
 ```
@@ -147,34 +158,44 @@ class Kernel extends BaseKernel
 ```php
 use Luany\Core\Routing\Route;
 use App\Http\Controllers\HomeController;
+use App\Http\Controllers\UserController;
+use App\Http\Controllers\PostController;
 
-Route::get('/', [HomeController::class, 'index']);
-Route::get('/about', [HomeController::class, 'about']);
+// Basic verbs
+Route::get('/',        [HomeController::class, 'index']);
+Route::post('/users',  [UserController::class, 'store']);
+Route::put('/users/{id}',    [UserController::class, 'update']);
+Route::patch('/users/{id}',  [UserController::class, 'update']);
+Route::delete('/users/{id}', [UserController::class, 'destroy']);
+Route::any('/webhook', [WebhookController::class, 'handle']);
 
-Route::prefix('api')->group(function () {
-    Route::get('/users', [UserController::class, 'index']);
+// Named routes
+Route::get('/users/{id}', [UserController::class, 'show'])->name('users.show');
+
+// Resource routes — generates full RESTful CRUD (8 routes)
+Route::resource('posts', PostController::class);
+
+// API resource — excludes create/edit form routes (6 routes)
+Route::apiResource('posts', PostController::class);
+
+// View route — no controller needed
+Route::view('/welcome', 'pages.welcome', ['name' => 'World']);
+
+// Groups — prefix and middleware applied to all routes inside
+Route::prefix('admin')->middleware(App\Middleware\AuthMiddleware::class)->group(function () {
+    Route::get('/dashboard', [AdminController::class, 'index']);
+    Route::get('/users',     [AdminController::class, 'users']);
+});
+
+Route::prefix('api/v1')->group(function () {
+    Route::get('/users',  [UserController::class, 'index']);
     Route::post('/users', [UserController::class, 'store']);
 });
 ```
 
-## Environment
+## Controllers & Views
 
-```php
-use Luany\Framework\Support\Env;
-
-Env::load($app->basePath()); // loads .env
-
-Env::get('APP_NAME', 'Luany');
-Env::get('APP_DEBUG', false);
-Env::required(['DB_HOST', 'DB_NAME']); // throws if missing
-
-// Or via helper:
-env('APP_NAME', 'Luany');
-```
-
-## Views (LTE)
-
-The LTE engine is registered automatically at boot. Use the `view()` helper in controllers:
+Three ways to return a view — all valid:
 
 ```php
 use Luany\Core\Http\Request;
@@ -182,19 +203,49 @@ use Luany\Core\Http\Response;
 
 class HomeController
 {
+    // 1. Explicit — full control over status code and headers
     public function index(Request $request): Response
     {
-        return Response::make(view('pages.home', [
-            'title' => 'Welcome',
-        ]));
+        return Response::make(view('pages.home', ['title' => 'Welcome']));
+    }
+
+    // 2. Concise — Router normalises string return to Response automatically
+    public function about(Request $request): string
+    {
+        return view('pages.about', ['title' => 'About']);
+    }
+
+    // 3. JSON — return array, Router converts to JSON Response automatically
+    public function api(Request $request): array
+    {
+        return ['users' => $this->users];
     }
 }
+```
+
+For static pages with no controller logic, use route-level view registration:
+
+```php
+Route::view('/welcome', 'pages.welcome', ['title' => 'Welcome']);
+```
+
+## Environment
+
+```php
+use Luany\Framework\Support\Env;
+
+Env::load($app->basePath());                    // loads .env — idempotent
+Env::get('APP_NAME', 'Luany');                  // with default
+Env::get('APP_DEBUG', false);                   // auto-casts true/false/null
+Env::required(['DB_HOST', 'DB_NAME']);          // throws if missing
+
+env('APP_NAME', 'Luany');                       // global helper
 ```
 
 ## What's included
 
 - **luany/core** — HTTP Request/Response, middleware pipeline, router
-- **luany/lte** — AST-based template engine with zero regex parsing
+- **luany/lte** — AST-based template engine, zero regex parsing
 - **vlucas/phpdotenv** — Environment variable loading (encapsulated in `Env`)
 - **psr/log** — Logger interface (PSR-3)
 
@@ -210,7 +261,15 @@ composer install
 vendor/bin/phpunit
 ```
 
+56 tests, 64 assertions.
+
 ## Changelog
+
+### v0.2.0
+- README: Why Luany, Design Principles, compiler-grade explained, status notice
+- Routes section: full routing API documented (all verbs, resource, apiResource, view, groups, named)
+- Views section: all three return patterns documented (Response::make, string, array)
+- `helpers.php`: fixed PHP 8.4 nullable deprecation (`?string $abstract`)
 
 ### v0.1.0
 - `Application` — DI container with bind, singleton, instance, make, auto-resolve
