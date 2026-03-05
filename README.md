@@ -146,7 +146,7 @@ class Kernel extends BaseKernel
 {
     // Applied to every request before routing
     protected array $middleware = [
-        App\Middleware\AuthMiddleware::class,
+        App\Middleware\CsrfMiddleware::class,
     ];
 
     protected string $routesFile = 'routes/http.php';
@@ -261,9 +261,16 @@ composer install
 vendor/bin/phpunit
 ```
 
-56 tests, 64 assertions.
+63 tests, 73 assertions.
 
 ## Changelog
+
+### v0.2.1
+- `Exceptions/Handler` — abstract base exception handler with `report()` and `render()`
+- `Kernel::handle()` — now wraps dispatch in try/catch, delegates to `Handler` via container
+- `Kernel::handleException()` — private method, calls `report()` then `render()`
+- Debug page — branded Luany error page with stack trace (only in `APP_DEBUG=true`)
+- 63 tests, 73 assertions — `ExceptionHandlerTest` added
 
 ### v0.2.0
 - README: Why Luany, Design Principles, compiler-grade explained, status notice
