@@ -229,6 +229,51 @@ For static pages with no controller logic, use route-level view registration:
 Route::view('/welcome', 'pages.welcome', ['title' => 'Welcome']);
 ```
 
+## Exception Handling
+
+Override the base `Handler` in your application to customise error responses per exception type:
+
+```php
+namespace App\Exceptions;
+
+use Luany\Core\Http\Response;
+use Luany\Core\Exceptions\RouteNotFoundException;
+use Luany\Framework\Exceptions\Handler as BaseHandler;
+
+class Handler extends BaseHandler
+{
+    protected array $dontReport = [
+        // RouteNotFoundException::class,
+    ];
+
+    public function render(\Throwable $e): Response
+    {
+        // 404 — always show the styled view
+        if ($e instanceof RouteNotFoundException) {
+            return Response::make(view('pages.errors.404'), 404);
+        }
+
+        // 500 — styled view in production, framework debug page in development
+        if (!$this->debug) {
+            return Response::make(view('pages.errors.500'), 500);
+        }
+
+        return parent::render($e);
+    }
+}
+```
+
+Bind the handler in `bootstrap/app.php`:
+
+```php
+$app->singleton(
+    \Luany\Framework\Exceptions\Handler::class,
+    fn() => new App\Exceptions\Handler((bool) Env::get('APP_DEBUG', false))
+);
+```
+
+When `APP_DEBUG=true`, uncaught exceptions render a full-screen branded debug page — self-contained, no external assets, works regardless of app boot state.
+
 ## Environment
 
 ```php
@@ -264,6 +309,12 @@ vendor/bin/phpunit
 63 tests, 73 assertions.
 
 ## Changelog
+
+### v0.2.2
+- `Handler::debugPage()` — full redesign: full-screen layout, animated radial gradients, 48px grid overlay
+- Debug page — large exception name with namespace/shortName split, meta row (file, line, method, URI, time)
+- Debug page — branded SVG favicon as inline base64 data URI, no external asset dependencies
+- Debug page — "Debug Mode" badge with animated pulse dot, self-contained regardless of app boot state
 
 ### v0.2.1
 - `Exceptions/Handler` — abstract base exception handler with `report()` and `render()`
