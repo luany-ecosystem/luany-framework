@@ -98,3 +98,33 @@ if (!function_exists('response')) {
         return Response::make($body, $status);
     }
 }
+
+if (!function_exists('__')) {
+    /**
+     * Translate a key using the bound Translator instance.
+     *
+     * Usage:
+     *   __('nav.home')
+     *   __('footer.copyright', ['year' => date('Y'), 'name' => 'Luany'])
+     */
+    function __(string $key, array $replace = []): string
+    {
+        /** @var \Luany\Framework\Support\Translator $translator */
+        $translator = app('translator');
+        return $translator->get($key, $replace);
+    }
+}
+
+if (!function_exists('locale')) {
+    /**
+     * Return the currently active locale code.
+     *
+     * Usage:
+     *   locale()           → 'en' | 'pt'
+     *   locale() === 'pt'  → true
+     */
+    function locale(): string
+    {
+        return app('translator')->getLocale();
+    }
+}

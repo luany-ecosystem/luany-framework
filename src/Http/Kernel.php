@@ -73,36 +73,38 @@ class Kernel implements KernelInterface
             $this->boot();
         }
 
-        try {
-            if (empty($this->middleware)) {
+        if (empty($this->middleware)) {
+            try {
                 return Route::handle($request);
+            } catch (\Throwable $e) {
+                return $this->handleException($e);
             }
-
-            return (new Pipeline())
-                ->send($request)
-                ->through($this->middleware)
-                ->then(fn(Request $req) => Route::handle($req));
-
-        } catch (\Throwable $e) {
-            return $this->handleException($e);
         }
+
+        return (new Pipeline())
+            ->send($request)
+            ->through($this->middleware)
+            ->then(function (Request $req) {
+                try {
+                    return Route::handle($req);
+                } catch (\Throwable $e) {
+                    return $this->handleException($e);
+                }
+            });
     }
 
     private function handleException(\Throwable $e): Response
     {
         try {
             $handler = $this->app->make(\Luany\Framework\Exceptions\Handler::class);
-
             try {
                 $handler->report($e);
-            } catch (\Throwable) {
-                // Never let report() break the response cycle
-            }
-
+            } catch (\Throwable) {}
             return $handler->render($e);
-
         } catch (\Throwable) {
-            // Handler itself failed — last resort fallback
+            if ($e instanceof \Luany\Core\Exceptions\RouteNotFoundException) {
+                return Response::notFound();
+            }
             return Response::serverError();
         }
     }
