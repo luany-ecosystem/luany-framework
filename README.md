@@ -306,9 +306,19 @@ composer install
 vendor/bin/phpunit
 ```
 
-63 tests, 73 assertions.
+80 tests, 91 assertions.
 
 ## Changelog
+
+### v0.3.0
+- `Translator` — migrated from skeleton to `Luany\Framework\Support\Translator`; zero external dependencies, flat key/value files, `:placeholder` replacements, fallback locale, idempotent file loading
+- `LocaleMiddleware` — migrated to `Luany\Framework\Http\Middleware\LocaleMiddleware`; detects locale via cookie → Accept-Language → APP_LOCALE env → fallback; uses `Request::cookie()` and `Request::header()`, no superglobals
+- `__()` helper — added to `helpers.php`; resolves via `app('translator')`
+- `locale()` helper — added to `helpers.php`; returns active locale code
+- `Kernel::handle()` — exception handling moved inside `then()` callback; global middleware now wraps the full dispatch including error responses
+- `Kernel::handleException()` — explicit `RouteNotFoundException` fallback when Handler is not bound in container
+- `luany/core` bumped to `^0.2.3`
+- 80 tests, 91 assertions
 
 ### v0.2.2
 - `Handler::debugPage()` — full redesign: full-screen layout, animated radial gradients, 48px grid overlay
@@ -321,7 +331,7 @@ vendor/bin/phpunit
 - `Kernel::handle()` — now wraps dispatch in try/catch, delegates to `Handler` via container
 - `Kernel::handleException()` — private method, calls `report()` then `render()`
 - Debug page — branded Luany error page with stack trace (only in `APP_DEBUG=true`)
-- 63 tests, 73 assertions — `ExceptionHandlerTest` added
+- 80 tests, 91 assertions — `ExceptionHandlerTest` added
 
 ### v0.2.0
 - README: Why Luany, Design Principles, compiler-grade explained, status notice
