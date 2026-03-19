@@ -89,10 +89,8 @@ $app->instance('config', $config);
 // Resolve
 $db = $app->make('db');
 
-// Global helpers
-app('db');                       // resolve from container
-app();                           // Application instance
-base_path('config/app.php');     // absolute path
+// Resolve
+$db = $app->make('db');
 ```
 
 ## Service Providers
@@ -274,6 +272,189 @@ $app->singleton(
 
 When `APP_DEBUG=true`, uncaught exceptions render a full-screen branded debug page — self-contained, no external assets, works regardless of app boot state.
 
+## Configuration
+
+Loads PHP files from `config/` directory. Each file becomes a top-level key, accessed with dot-notation:
+
+```php
+// config/app.php
+return [
+    'name'  => env('APP_NAME', 'Luany'),
+    'debug' => (bool) env('APP_DEBUG', false),
+    'url'   => env('APP_URL', 'http://localhost'),
+];
+```
+
+```php
+use Luany\Framework\Support\Config;
+
+$config = app('config');                        // Config instance
+$config->get('app.name');                       // 'Luany'
+$config->get('app.missing', 'default');         // fallback
+$config->set('app.debug', true);                // runtime override
+$config->has('database.connections.mysql');      // true/false
+$config->all();                                 // full config array
+
+config('app.name');                             // global helper
+config('app.missing', 'default');               // helper with fallback
+```
+
+The `Config` is auto-registered in the Kernel boot and bound as `'config'` in the container.
+
+## Session
+
+File-based session with a pluggable interface. The framework ships `FileSession`; applications can implement `SessionInterface` for Redis, database, etc.
+
+```php
+use Luany\Framework\Contracts\SessionInterface;
+
+$session = app('session');                      // SessionInterface
+$session->set('user_id', 42);
+$session->get('user_id');                       // 42
+$session->has('user_id');                       // true
+$session->forget('user_id');                    // remove key
+$session->all();                                // all session data
+
+// Flash data — survives exactly one subsequent request
+$session->flash('status', 'Profile updated.');
+$session->get('status');                        // available next request only
+
+$session->regenerate();                         // new session ID (post-login)
+$session->destroy();                            // destroy entire session
+
+session('user_id');                             // global helper — get value
+session('user_id', 'default');                  // helper with fallback
+session();                                      // SessionInterface instance
+```
+
+### SessionInterface
+
+```php
+interface SessionInterface
+{
+    public function start(): void;
+    public function get(string $key, mixed $default = null): mixed;
+    public function set(string $key, mixed $value): void;
+    public function has(string $key): bool;
+    public function forget(string $key): void;
+    public function flash(string $key, mixed $value): void;
+    public function regenerate(): void;
+    public function save(): void;
+    public function getId(): string;
+    public function all(): array;
+    public function destroy(): void;
+}
+```
+
+The `FileSession` is auto-registered in the Kernel boot. Session files are stored in `storage/sessions/`.
+
+## CSRF Protection
+
+Token generation and validation via the `CsrfToken` service, with a base `CsrfMiddleware`:
+
+```php
+use Luany\Framework\Security\CsrfToken;
+
+$csrf = app('csrf');                            // CsrfToken instance
+$token = $csrf->token();                        // get or generate token
+$csrf->validate($submitted);                    // true/false
+$csrf->regenerate();                            // force new token
+
+csrf_token();                                   // global helper
+```
+
+In templates:
+```html
+<form method="POST" action="/submit">
+    <input type="hidden" name="_token" value="<?= csrf_token() ?>">
+</form>
+```
+
+### CsrfMiddleware
+
+Base middleware that validates `_token` on POST, PUT, PATCH, DELETE. Extend it in your application:
+
+```php
+namespace App\Http\Middleware;
+
+use Luany\Framework\Http\Middleware\CsrfMiddleware as BaseCsrf;
+
+class VerifyCsrfToken extends BaseCsrf
+{
+    // URIs excluded from CSRF verification (e.g. webhooks)
+    protected array $except = [
+        '/api/webhook',
+        '/stripe/*',
+    ];
+}
+```
+
+Token sources (checked in order): POST body `_token` field, `X-CSRF-TOKEN` header.
+
+## Validation
+
+Zero-dependency validation engine. Validates data arrays against declarative rule sets.
+
+```php
+use Luany\Framework\Validation\Validator;
+
+$v = Validator::make($request->all(), [
+    'name'     => 'required|string|min:2|max:255',
+    'email'    => 'required|email|unique:users,email',
+    'password' => 'required|string|min:8|confirmed',
+    'role'     => 'required|in:admin,editor,viewer',
+    'age'      => 'required|numeric|min:18|max:120',
+]);
+
+if ($v->fails()) {
+    $errors = $v->errors();       // ['field' => ['error message', ...]]
+}
+
+$validated = $v->validated();     // only fields that passed validation
+$v->passes();                     // true if all rules pass
+```
+
+### Available Rules
+
+- `required` — field must be present and non-empty
+- `string` — field must be a string
+- `email` — field must be a valid email address
+- `numeric` — field must be numeric
+- `min:{n}` — minimum length (string) or minimum value (numeric)
+- `max:{n}` — maximum length (string) or maximum value (numeric)
+- `in:{a},{b},{c}` — field must be one of the listed values
+- `confirmed` — field must have a matching `{field}_confirmation` key
+- `unique:{table},{column}` — field must be unique (requires registered checker)
+
+### Unique Rule Setup
+
+The `unique` rule uses a callback to check for duplicates — no direct database coupling:
+
+```php
+use Luany\Framework\Validation\Validator;
+use Luany\Database\Connection;
+
+Validator::setUniqueChecker(function (string $table, string $column, mixed $value): bool {
+    return Connection::getInstance()
+        ->table($table)
+        ->where($column, '=', $value)
+        ->exists();
+});
+```
+
+## Old Input Helper
+
+Retrieve flashed input from the previous request (for repopulating forms after validation errors):
+
+```php
+old('email');                                   // previous email input
+old('name', 'default');                         // with fallback
+```
+
+```html
+<input name="email" value="<?= old('email') ?>">
+```
+
 ## Environment
 
 ```php
@@ -299,6 +480,24 @@ env('APP_NAME', 'Luany');                       // global helper
 - PHP 8.1+
 - Composer 2.0+
 
+## Global Helpers
+
+```php
+app('db');                       // resolve from container
+app();                           // Application instance
+base_path('config/app.php');     // absolute path
+config('app.name');              // configuration value
+session('user_id');              // session value
+csrf_token();                    // CSRF token
+old('email');                    // flashed old input
+view('pages.home', $data);       // render LTE view
+redirect('/dashboard');           // redirect Response
+response('OK', 200);             // Response instance
+env('APP_NAME', 'Luany');        // environment variable
+__('nav.home');                  // translation
+locale();                        // current locale
+```
+
 ## Testing
 
 ```bash
@@ -306,9 +505,20 @@ composer install
 vendor/bin/phpunit
 ```
 
-81 tests, 93 assertions.
+164 tests, 205 assertions.
 
 ## Changelog
+
+### v0.4.0
+- `Config` — file-based configuration loader with dot-notation access (`Config::get('app.name')`), runtime overrides (`set()`), `has()`, `all()`; auto-registered in Kernel boot as `'config'`
+- `SessionInterface` — pluggable session contract: `start()`, `get()`, `set()`, `has()`, `forget()`, `flash()`, `regenerate()`, `save()`, `destroy()`, `getId()`, `all()`
+- `FileSession` — file-based session driver implementing `SessionInterface`; flash data aging (new → old → purged per request); auto-registered in Kernel boot as `'session'`
+- `CsrfToken` — CSRF token service: `token()`, `validate()`, `regenerate()`; session-backed, timing-safe comparison via `hash_equals()`; auto-registered as `'csrf'`
+- `CsrfMiddleware` — base middleware for CSRF protection; validates `_token` on POST/PUT/PATCH/DELETE; supports URI exclusion patterns (exact + wildcard); extracts token from body or `X-CSRF-TOKEN` header
+- `Validator` — zero-dependency validation engine: `Validator::make($data, $rules)` with rules: `required`, `string`, `email`, `numeric`, `min`, `max`, `in`, `confirmed`, `unique`; multibyte-safe string length checks; pluggable `unique` checker via `setUniqueChecker()`
+- `Kernel::boot()` — now registers Config, Session, and CsrfToken singletons before LTE and routes
+- `helpers.php` — added `config()`, `session()`, `csrf_token()`, `old()` global helpers
+- 164 tests, 205 assertions
 
 ### v0.3.1
 - `Kernel::handle()` — exceptions thrown inside global middleware pipeline are now caught; outer `try/catch` wraps the entire pipeline so middleware exceptions are routed through `Handler::render()`; inner `try/catch` in `then()` callback preserved for route exceptions (allowing middleware "after" phase to decorate error responses)

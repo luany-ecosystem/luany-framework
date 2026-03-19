@@ -128,3 +128,74 @@ if (!function_exists('locale')) {
         return app('translator')->getLocale();
     }
 }
+
+if (!function_exists('config')) {
+    /**
+     * Get a configuration value using dot-notation.
+     *
+     * Usage:
+     *   config('app.name')              // value
+     *   config('app.missing', 'default') // fallback
+     */
+    function config(string $key, mixed $default = null): mixed
+    {
+        /** @var \Luany\Framework\Support\Config $config */
+        $config = app('config');
+        return $config->get($key, $default);
+    }
+}
+
+if (!function_exists('session')) {
+    /**
+     * Get the session instance, or get/set a session value.
+     *
+     * Usage:
+     *   session()                    // SessionInterface instance
+     *   session('user_id')           // get value
+     *   session('user_id', 'default') // get with fallback
+     */
+    function session(?string $key = null, mixed $default = null): mixed
+    {
+        /** @var \Luany\Framework\Contracts\SessionInterface $session */
+        $session = app('session');
+
+        if ($key === null) {
+            return $session;
+        }
+
+        return $session->get($key, $default);
+    }
+}
+
+if (!function_exists('csrf_token')) {
+    /**
+     * Get the current CSRF token.
+     *
+     * Usage:
+     *   <input type="hidden" name="_token" value="<?= csrf_token() ?>">
+     */
+    function csrf_token(): string
+    {
+        /** @var \Luany\Framework\Security\CsrfToken $csrf */
+        $csrf = app('csrf');
+        return $csrf->token();
+    }
+}
+
+if (!function_exists('old')) {
+    /**
+     * Get flashed old input from the previous request.
+     *
+     * Usage:
+     *   <input name="email" value="<?= old('email') ?>">
+     *   old('name', 'default')
+     */
+    function old(string $key, mixed $default = null): mixed
+    {
+        /** @var \Luany\Framework\Contracts\SessionInterface $session */
+        $session = app('session');
+        $oldInput = $session->get('_old_input', []);
+
+        return $oldInput[$key] ?? $default;
+    }
+}

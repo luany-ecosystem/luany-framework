@@ -8,6 +8,10 @@ use Luany\Core\Middleware\Pipeline;
 use Luany\Core\Routing\Route;
 use Luany\Framework\Application;
 use Luany\Framework\Contracts\KernelInterface;
+use Luany\Framework\Contracts\SessionInterface;
+use Luany\Framework\Security\CsrfToken;
+use Luany\Framework\Session\FileSession;
+use Luany\Framework\Support\Config;
 use Luany\Lte\Engine;
 
 /**
@@ -60,6 +64,9 @@ class Kernel implements KernelInterface
             return;
         }
 
+        $this->registerConfig();
+        $this->registerSession();
+        $this->registerCsrf();
         $this->registerLte();
         $this->loadRoutes();
         $this->app->bootProviders();
@@ -115,7 +122,45 @@ class Kernel implements KernelInterface
         // Override in application kernel to add behaviour.
     }
 
-    // ── Private ───────────────────────────────────────────────────────────────
+    // ── Private ───────────────────────────────────────────────────────────────────────
+
+    private function registerConfig(): void
+    {
+        $app = $this->app;
+
+        $app->singleton('config', function () use ($app) {
+            return new Config($app->configPath());
+        });
+    }
+
+    private function registerSession(): void
+    {
+        $app = $this->app;
+
+        $app->singleton('session', function () use ($app) {
+            $savePath = $app->storagePath('sessions');
+            $session = new FileSession($savePath);
+            $session->start();
+            return $session;
+        });
+
+        $app->singleton(SessionInterface::class, function () use ($app) {
+            return $app->make('session');
+        });
+    }
+
+    private function registerCsrf(): void
+    {
+        $app = $this->app;
+
+        $app->singleton('csrf', function () use ($app) {
+            return new CsrfToken($app->make('session'));
+        });
+
+        $app->singleton(CsrfToken::class, function () use ($app) {
+            return $app->make('csrf');
+        });
+    }
 
     private function registerLte(): void
     {
