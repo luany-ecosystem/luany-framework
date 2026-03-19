@@ -73,24 +73,18 @@ class Kernel implements KernelInterface
             $this->boot();
         }
 
-        if (empty($this->middleware)) {
-            try {
+        try {
+            if (empty($this->middleware)) {
                 return Route::handle($request);
-            } catch (\Throwable $e) {
-                return $this->handleException($e);
             }
-        }
 
-        return (new Pipeline())
-            ->send($request)
-            ->through($this->middleware)
-            ->then(function (Request $req) {
-                try {
-                    return Route::handle($req);
-                } catch (\Throwable $e) {
-                    return $this->handleException($e);
-                }
-            });
+            return (new Pipeline())
+                ->send($request)
+                ->through($this->middleware)
+                ->then(fn(Request $req) => Route::handle($req));
+        } catch (\Throwable $e) {
+            return $this->handleException($e);
+        }
     }
 
     private function handleException(\Throwable $e): Response
