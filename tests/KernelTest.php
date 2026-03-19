@@ -41,6 +41,14 @@ class ShortCircuitMiddleware implements MiddlewareInterface
     }
 }
 
+class ThrowingMiddleware implements MiddlewareInterface
+{
+    public function handle(Request $request, callable $next): Response
+    {
+        throw new \RuntimeException('Middleware exploded');
+    }
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 class KernelTest extends TestCase
@@ -142,7 +150,23 @@ class KernelTest extends TestCase
         $this->assertSame('short-circuited', $response->getBody());
     }
 
-    // ── terminate ────────────────────────────────────────────────────────────
+    // ── middleware exceptions are caught by Kernel ────────────────────────────
+
+    public function test_middleware_exception_is_caught_and_returns_error_response(): void
+    {
+        $kernel = new TestKernel($this->app);
+        $kernel->setMiddleware([ThrowingMiddleware::class]);
+        $kernel->boot();
+
+        $request  = new Request('GET', '/any-route');
+        $response = $kernel->handle($request);
+
+        // The exception must NOT escape — Kernel must return a valid Response
+        $this->assertInstanceOf(Response::class, $response);
+        $this->assertSame(500, $response->getStatusCode());
+    }
+
+    // ── terminate ──────────────────────────────────────────────────────
 
     public function test_terminate_does_not_throw(): void
     {
