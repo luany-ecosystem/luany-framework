@@ -306,9 +306,13 @@ composer install
 vendor/bin/phpunit
 ```
 
-80 tests, 91 assertions.
+81 tests, 93 assertions.
 
 ## Changelog
+
+### v0.3.1
+- `Kernel::handle()` — exceptions thrown inside global middleware pipeline are now caught; outer `try/catch` wraps the entire pipeline so middleware exceptions are routed through `Handler::render()`; inner `try/catch` in `then()` callback preserved for route exceptions (allowing middleware "after" phase to decorate error responses)
+- 81 tests, 93 assertions
 
 ### v0.3.0
 - `Translator` — migrated from skeleton to `Luany\Framework\Support\Translator`; zero external dependencies, flat key/value files, `:placeholder` replacements, fallback locale, idempotent file loading
