@@ -7,7 +7,6 @@ use Luany\Framework\Security\CsrfToken;
 use PHPUnit\Framework\TestCase;
 
 /**
- * @covers \Luany\Framework\Security\CsrfToken
  */
 class CsrfTokenTest extends TestCase
 {

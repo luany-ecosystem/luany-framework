@@ -1,570 +1,432 @@
-# luany-framework
+# luany/framework
 
-> Compiler-grade PHP MVC framework. Integrates luany/core and luany/lte.
+**Application framework for Luany. IoC container, HTTP kernel, sessions, validation, config, CSRF, i18n.**
 
-## Why Luany?
+**Version**: next/v1 &nbsp;|&nbsp; **PHP**: >= 8.1 &nbsp;|&nbsp; **License**: MIT
+**Author**: António Ambrósio Ngola &nbsp;|&nbsp; **Org**: [luany-ecosystem](https://github.com/luany-ecosystem)
 
-- **Clean separation** — runtime (core) is independent of the framework layer
-- **AST-driven templates** — LTE compiles views into optimised PHP via AST transformation, no regex parsing, deterministic output
-- **Explicit lifecycle** — boot / handle / terminate, nothing hidden
-- **Extensible without touching the kernel** — Service Providers as the official extension mechanism
-- **Minimal surface area** — only what is differential is built; generic infrastructure is delegated
+---
 
-> ⚠️ Luany is currently in `v0.x`. Core contracts are stable; higher-level APIs may evolve before `v1.0`.
+## Table of Contents
 
-## Installation
+1. [Overview](#1-overview)
+2. [Installation](#2-installation)
+3. [Application Container](#3-application-container)
+4. [HTTP Kernel](#4-http-kernel)
+5. [Config](#5-config)
+6. [Session](#6-session)
+7. [Validation](#7-validation)
+8. [CSRF Protection](#8-csrf-protection)
+9. [Exception Handling](#9-exception-handling)
+10. [Helpers](#10-helpers)
+11. [Service Providers](#11-service-providers)
+12. [Changelog](#12-changelog)
+
+---
+
+## 1. Overview
+
+`luany/framework` is the application layer of the Luany ecosystem. It wires together the IoC container, HTTP lifecycle, session management, validation, configuration, and i18n into a coherent application runtime.
+
+It depends on `luany/core` for routing, request and response primitives, and on `luany/lte` for the template engine.
+
+---
+
+## 2. Installation
 
 ```bash
 composer require luany/framework
 ```
 
-Or start a new project from the official skeleton:
+The framework is typically used through the application skeleton (`luany/luany`), which already configures everything correctly.
 
-```bash
-composer create-project luany/luany my-project
-```
+---
 
-## Architecture
+## 3. Application Container
 
-```
-Request::fromGlobals()
-    └─ Kernel::handle()
-        └─ Global Middleware Pipeline
-            └─ Route::handle()
-                └─ Route Middleware Pipeline
-                    └─ Controller → Response
-                        └─ Response::send()
-        └─ Kernel::terminate()
-```
-
-## Design Principles
-
-- Build only what is differential
-- Keep core independent of the framework
-- Framework orchestrates — never owns business logic
-- Explicit lifecycle over magic
-- Extensible without modifying the kernel
-
-## Bootstrap (public/index.php)
+The `Application` class is the IoC container and global registry.
 
 ```php
-require __DIR__ . '/../vendor/autoload.php';
-
 use Luany\Framework\Application;
-use Luany\Framework\Support\Env;
-use Luany\Core\Http\Request;
 
-$app = new Application(__DIR__ . '/..');
+$app = new Application(__DIR__); // pass the application root path
 
-Env::load($app->basePath());
+// Bind a factory (new instance every call)
+$app->bind('mailer', fn($app) => new Mailer(env('MAIL_HOST')));
 
+// Bind a singleton (resolved once, cached)
+$app->singleton('cache', fn($app) => new Cache(env('CACHE_DRIVER')));
+
+// Store a pre-built instance
+$app->instance('db', $existingConnection);
+
+// Resolve from the container
+$cache = $app->make('cache');
+$cache = app('cache'); // via helper
+```
+
+The `Application` instance is accessible globally via `app()`.
+
+### Auto-resolution
+
+Classes with no constructor dependencies are auto-resolved:
+
+```php
+$handler = $app->make(SomeHandler::class);
+```
+
+### Service Provider lifecycle
+
+```php
 $app->register(new DatabaseServiceProvider());
+// register() calls provider->register() immediately
+// boot() is deferred until $app->bootProviders() (called by Kernel)
+```
 
-$kernel   = $app->make(\Luany\Framework\Http\Kernel::class);
+### Path helpers
+
+```php
+$app->basePath()             // /var/www/my-app
+$app->basePath('config')     // /var/www/my-app/config
+$app->configPath()           // /var/www/my-app/config
+$app->storagePath('logs')    // /var/www/my-app/storage/logs
+$app->cachePath('views')     // /var/www/my-app/storage/cache/views
+$app->viewsPath()            // /var/www/my-app/views
+$app->routesPath()           // /var/www/my-app/routes
+```
+
+---
+
+## 4. HTTP Kernel
+
+The Kernel orchestrates the full HTTP request lifecycle.
+
+```php
+// public/index.php
+$app    = new Application(__DIR__ . '/..');
+$kernel = $app->make(Kernel::class);
 $kernel->boot();
-
 $request  = Request::fromGlobals();
 $response = $kernel->handle($request);
 $response->send();
-
 $kernel->terminate($request, $response);
 ```
 
-## Application (DI Container)
+### Boot sequence
+
+`boot()` runs in order:
+
+1. `registerConfig()` — loads `config/*.php`
+2. `registerSession()` — starts `FileSession`
+3. `registerCsrf()` — binds `CsrfToken`
+4. `registerLte()` — binds the LTE view engine
+5. `loadRoutes()` — requires `routes/http.php`
+6. `bootProviders()` — calls `boot()` on all registered providers
+
+### Global middleware
+
+Override in your application kernel:
 
 ```php
-use Luany\Framework\Application;
-
-$app = new Application(__DIR__);
-
-// Transient — new instance on every make()
-$app->bind('mailer', fn($app) => new Mailer(env('MAIL_HOST')));
-
-// Shared — same instance every make()
-$app->singleton('db', fn($app) => new Database(env('DB_DSN')));
-
-// Pre-built instance
-$app->instance('config', $config);
-
-// Resolve
-$db = $app->make('db');
-
-// Resolve
-$db = $app->make('db');
-```
-
-## Service Providers
-
-Service Providers are the official extension mechanism of the Luany framework.
-Register services in `register()`, use them in `boot()`.
-
-```php
-use Luany\Framework\ServiceProvider;
-use Luany\Framework\Application;
-
-class DatabaseServiceProvider extends ServiceProvider
+// app/Http/Kernel.php
+class Kernel extends \Luany\Framework\Http\Kernel
 {
-    public function register(Application $app): void
-    {
-        $app->singleton('db', fn() => new Database(
-            dsn:      env('DB_DSN'),
-            username: env('DB_USER'),
-            password: env('DB_PASS'),
-        ));
-    }
-
-    public function boot(Application $app): void
-    {
-        // All providers are registered — safe to call make() here
-    }
-}
-```
-
-Register providers before `$kernel->boot()`:
-
-```php
-$app->register(new DatabaseServiceProvider());
-$app->register(new MailServiceProvider());
-
-$kernel->boot(); // calls boot() on all providers internally
-```
-
-**Lifecycle guarantee:** all `register()` calls complete before any `boot()` runs — cross-provider dependencies are always safe in `boot()`.
-
-## HTTP Kernel
-
-Extend the Kernel to add global middleware and customise the routes file:
-
-```php
-namespace App\Http;
-
-use Luany\Framework\Http\Kernel as BaseKernel;
-
-class Kernel extends BaseKernel
-{
-    // Applied to every request before routing
     protected array $middleware = [
-        App\Middleware\CsrfMiddleware::class,
+        LocaleMiddleware::class,
+        CsrfMiddleware::class,
     ];
-
-    protected string $routesFile = 'routes/http.php';
 }
 ```
 
-## Routes (routes/http.php)
+Middleware runs on every request, before routing.
+
+---
+
+## 5. Config
+
+Loads PHP files from `config/` and provides dot-notation access.
 
 ```php
-use Luany\Core\Routing\Route;
-use App\Http\Controllers\HomeController;
-use App\Http\Controllers\UserController;
-use App\Http\Controllers\PostController;
+// config/app.php
+return ['name' => 'My App', 'debug' => false];
 
-// Basic verbs
-Route::get('/',        [HomeController::class, 'index']);
-Route::post('/users',  [UserController::class, 'store']);
-Route::put('/users/{id}',    [UserController::class, 'update']);
-Route::patch('/users/{id}',  [UserController::class, 'update']);
-Route::delete('/users/{id}', [UserController::class, 'destroy']);
-Route::any('/webhook', [WebhookController::class, 'handle']);
-
-// Named routes
-Route::get('/users/{id}', [UserController::class, 'show'])->name('users.show');
-
-// Resource routes — generates full RESTful CRUD (8 routes)
-Route::resource('posts', PostController::class);
-
-// API resource — excludes create/edit form routes (6 routes)
-Route::apiResource('posts', PostController::class);
-
-// View route — no controller needed
-Route::view('/welcome', 'pages.welcome', ['name' => 'World']);
-
-// Groups — prefix and middleware applied to all routes inside
-Route::prefix('admin')->middleware(App\Middleware\AuthMiddleware::class)->group(function () {
-    Route::get('/dashboard', [AdminController::class, 'index']);
-    Route::get('/users',     [AdminController::class, 'users']);
-});
-
-Route::prefix('api/v1')->group(function () {
-    Route::get('/users',  [UserController::class, 'index']);
-    Route::post('/users', [UserController::class, 'store']);
-});
+// Usage
+config('app.name')           // 'My App'
+config('app.missing', 'def') // 'def'
+config('app.debug')          // false
 ```
 
-## Controllers & Views
-
-Three ways to return a view — all valid:
+Direct usage:
 
 ```php
-use Luany\Core\Http\Request;
-use Luany\Core\Http\Response;
+$config = app('config');
+$config->get('app.name');
+$config->set('app.debug', true);  // runtime override
+$config->has('app.name');         // true
+$config->all();                   // full array
+```
 
-class HomeController
+---
+
+## 6. Session
+
+Cookie-based sessions backed by the filesystem (file-per-session in `storage/sessions/`).
+
+```php
+// Via helper
+session()                    // SessionInterface instance
+session('user_id')           // get value
+session('user_id', 0)        // get with fallback
+
+// Via instance
+$session = app('session');
+$session->set('user_id', 42);
+$session->get('user_id');
+$session->has('user_id');
+$session->forget('user_id');
+$session->flash('success', 'Saved!');   // lives for one request
+$session->regenerate();                  // new session ID
+$session->destroy();
+```
+
+Flash data is available on the next request only:
+
+```php
+// In controller
+session()->flash('success', 'Record saved.');
+
+// In view (next request)
+{{ session('success') }}
+```
+
+Old input is automatically available via `old()` after a failed `validate()`:
+
+```php
+<input name="email" value="{{ old('email') }}">
+```
+
+---
+
+## 7. Validation
+
+### Validator directly
+
+```php
+use Luany\Framework\Validation\Validator;
+
+$v = Validator::make($request->body(), [
+    'name'     => 'required|string|min:2|max:255',
+    'email'    => 'required|email|unique:users,email',
+    'password' => 'required|string|min:8|confirmed',
+    'role'     => 'required|in:admin,editor,viewer',
+]);
+
+if ($v->fails()) {
+    $errors = $v->errors();    // ['name' => ['The name field is required.']]
+}
+
+$data = $v->validated();       // only validated fields
+```
+
+### validate() helper — recommended
+
+The `validate()` helper removes all boilerplate from controllers. On failure it automatically flashes errors and old input to the session, then throws a `ValidationException` which the Kernel resolves as a redirect.
+
+```php
+public function store(Request $request): Response
 {
-    // 1. Explicit — full control over status code and headers
-    public function index(Request $request): Response
-    {
-        return Response::make(view('pages.home', ['title' => 'Welcome']));
-    }
+    $data = validate($request->body(), [
+        'name'  => 'required|string|min:2|max:255',
+        'email' => 'required|email',
+    ], '/users/create');   // redirect URL on failure
 
-    // 2. Concise — Router normalises string return to Response automatically
-    public function about(Request $request): string
-    {
-        return view('pages.about', ['title' => 'About']);
-    }
-
-    // 3. JSON — return array, Router converts to JSON Response automatically
-    public function api(Request $request): array
-    {
-        return ['users' => $this->users];
-    }
+    User::create($data);
+    return redirect('/users');
 }
 ```
 
-For static pages with no controller logic, use route-level view registration:
+On failure the user is redirected to `/users/create` with errors and old input in session. The third argument defaults to `$_SERVER['HTTP_REFERER']` if omitted.
 
-```php
-Route::view('/welcome', 'pages.welcome', ['title' => 'Welcome']);
+In the view:
+
+```html
+@ifempty(session('errors'))
+    {{-- no errors --}}
+@else
+    @foreach(session('errors') as $field => $messages)
+        @foreach($messages as $message)
+            <p class="error">{{ $message }}</p>
+        @endforeach
+    @endforeach
+@endisset
 ```
 
-## Exception Handling
+### Available rules
 
-Override the base `Handler` in your application to customise error responses per exception type:
+| Rule | Description |
+|---|---|
+| `required` | Field must be present and non-empty |
+| `string` | Must be a string |
+| `email` | Must be a valid email address |
+| `numeric` | Must be numeric |
+| `min:N` | Minimum length (string) or value (numeric) |
+| `max:N` | Maximum length (string) or value (numeric) |
+| `in:a,b,c` | Must be one of the listed values |
+| `confirmed` | Must match `{field}_confirmation` |
+| `unique:table,col` | Must not already exist (requires `setUniqueChecker`) |
+
+### unique rule with database
 
 ```php
-namespace App\Exceptions;
+Validator::setUniqueChecker(function (string $table, string $column, mixed $value): bool {
+    return (bool) app('db')->table($table)->where($column, $value)->exists();
+});
+```
 
-use Luany\Core\Http\Response;
-use Luany\Core\Exceptions\RouteNotFoundException;
-use Luany\Framework\Exceptions\Handler as BaseHandler;
+---
 
-class Handler extends BaseHandler
+## 8. CSRF Protection
+
+`CsrfToken` generates and validates tokens stored in the session.
+
+```php
+$csrf = app('csrf');
+$token = $csrf->token();    // get or generate token
+$csrf->validate($token);    // throws if invalid
+```
+
+In LTE templates, use `@csrf`:
+
+```html
+<form method="POST" action="/users">
+    @csrf
+    ...
+</form>
+```
+
+The `CsrfMiddleware` automatically validates tokens on `POST`, `PUT`, `PATCH`, `DELETE` requests. It skips validation for `GET`, `HEAD`, `OPTIONS`.
+
+---
+
+## 9. Exception Handling
+
+### abort()
+
+Abort the current request with an HTTP status code:
+
+```php
+abort(404);
+abort(403, 'Forbidden');
+abort(422, 'Unprocessable content');
+```
+
+Throws `HttpException` which the Kernel converts to the appropriate response.
+
+### Custom handler
+
+```php
+// app/Exceptions/Handler.php
+class Handler extends \Luany\Framework\Exceptions\Handler
 {
-    protected array $dontReport = [
-        // RouteNotFoundException::class,
-    ];
-
     public function render(\Throwable $e): Response
     {
-        // 404 — always show the styled view
-        if ($e instanceof RouteNotFoundException) {
-            return Response::make(view('pages.errors.404'), 404);
+        if ($e instanceof SomeCustomException) {
+            return Response::make(view('errors.custom'), 400);
         }
-
-        // 500 — styled view in production, framework debug page in development
-        if (!$this->debug) {
-            return Response::make(view('pages.errors.500'), 500);
-        }
-
         return parent::render($e);
     }
 }
 ```
 
-Bind the handler in `bootstrap/app.php`:
+Register in a service provider:
 
 ```php
-$app->singleton(
-    \Luany\Framework\Exceptions\Handler::class,
-    fn() => new App\Exceptions\Handler((bool) Env::get('APP_DEBUG', false))
-);
+$app->singleton(\Luany\Framework\Exceptions\Handler::class, fn() => new Handler(
+    debug: (bool) env('APP_DEBUG', false)
+));
 ```
 
-When `APP_DEBUG=true`, uncaught exceptions render a full-screen branded debug page — self-contained, no external assets, works regardless of app boot state.
+### Exception priority in Kernel
 
-## Configuration
+1. `ValidationException` → flash is already done → redirect to `$e->getRedirectTo()`
+2. `HttpException` → `Response::make($message, $statusCode)`
+3. `RouteNotFoundException` → `Response::notFound()`
+4. Everything else → custom `Handler::render()` or `Response::serverError()`
 
-Loads PHP files from `config/` directory. Each file becomes a top-level key, accessed with dot-notation:
+---
 
-```php
-// config/app.php
-return [
-    'name'  => env('APP_NAME', 'Luany'),
-    'debug' => (bool) env('APP_DEBUG', false),
-    'url'   => env('APP_URL', 'http://localhost'),
-];
-```
+## 10. Helpers
 
-```php
-use Luany\Framework\Support\Config;
+All helpers are in `src/Support/helpers.php` and auto-loaded via Composer.
 
-$config = app('config');                        // Config instance
-$config->get('app.name');                       // 'Luany'
-$config->get('app.missing', 'default');         // fallback
-$config->set('app.debug', true);                // runtime override
-$config->has('database.connections.mysql');      // true/false
-$config->all();                                 // full config array
+| Helper | Description |
+|---|---|
+| `app(?string $abstract)` | Resolve from container |
+| `env(string $key, mixed $default)` | Get environment variable |
+| `base_path(string $path)` | Absolute path from app root |
+| `view(string $name, array $data)` | Render a view via LTE |
+| `redirect(string $url, int $status)` | Create redirect Response |
+| `response(string $body, int $status)` | Create Response |
+| `config(string $key, mixed $default)` | Get config value |
+| `session(?string $key, mixed $default)` | Get session or value |
+| `csrf_token()` | Get current CSRF token |
+| `old(string $key, mixed $default)` | Get previous request input |
+| `validate(array $data, array $rules, string $back)` | Validate or throw |
+| `abort(int $code, string $message)` | Abort with HTTP error |
+| `__(string $key, array $replace)` | Translate a key |
+| `locale()` | Get current locale |
 
-config('app.name');                             // global helper
-config('app.missing', 'default');               // helper with fallback
-```
+---
 
-The `Config` is auto-registered in the Kernel boot and bound as `'config'` in the container.
+## 11. Service Providers
 
-## Session
-
-File-based session with a pluggable interface. The framework ships `FileSession`; applications can implement `SessionInterface` for Redis, database, etc.
-
-```php
-use Luany\Framework\Contracts\SessionInterface;
-
-$session = app('session');                      // SessionInterface
-$session->set('user_id', 42);
-$session->get('user_id');                       // 42
-$session->has('user_id');                       // true
-$session->forget('user_id');                    // remove key
-$session->all();                                // all session data
-
-// Flash data — survives exactly one subsequent request
-$session->flash('status', 'Profile updated.');
-$session->get('status');                        // available next request only
-
-$session->regenerate();                         // new session ID (post-login)
-$session->destroy();                            // destroy entire session
-
-session('user_id');                             // global helper — get value
-session('user_id', 'default');                  // helper with fallback
-session();                                      // SessionInterface instance
-```
-
-### SessionInterface
+Service providers are the recommended way to register application bindings.
 
 ```php
-interface SessionInterface
+use Luany\Framework\ServiceProvider;
+use Luany\Framework\Contracts\ApplicationInterface;
+
+class DatabaseServiceProvider extends ServiceProvider
 {
-    public function start(): void;
-    public function get(string $key, mixed $default = null): mixed;
-    public function set(string $key, mixed $value): void;
-    public function has(string $key): bool;
-    public function forget(string $key): void;
-    public function flash(string $key, mixed $value): void;
-    public function regenerate(): void;
-    public function save(): void;
-    public function getId(): string;
-    public function all(): array;
-    public function destroy(): void;
+    public function register(ApplicationInterface $app): void
+    {
+        $app->singleton('db', fn() => new Connection(
+            host:     env('DB_HOST', '127.0.0.1'),
+            database: env('DB_NAME', 'luany'),
+            username: env('DB_USER', 'root'),
+            password: env('DB_PASS', ''),
+        ));
+    }
+
+    public function boot(ApplicationInterface $app): void
+    {
+        // Called after all providers are registered
+        // Safe to resolve other bindings here
+    }
 }
 ```
 
-The `FileSession` is auto-registered in the Kernel boot. Session files are stored in `storage/sessions/`.
-
-## CSRF Protection
-
-Token generation and validation via the `CsrfToken` service, with a base `CsrfMiddleware`:
+Register in `bootstrap/app.php`:
 
 ```php
-use Luany\Framework\Security\CsrfToken;
-
-$csrf = app('csrf');                            // CsrfToken instance
-$token = $csrf->token();                        // get or generate token
-$csrf->validate($submitted);                    // true/false
-$csrf->regenerate();                            // force new token
-
-csrf_token();                                   // global helper
+$app->register(new DatabaseServiceProvider());
 ```
+**Total: OK (174 tests, 223 assertions)**
+---
 
-In templates:
-```html
-<form method="POST" action="/submit">
-    <input type="hidden" name="_token" value="<?= csrf_token() ?>">
-</form>
-```
+## 12. Changelog
 
-### CsrfMiddleware
+### next/v1 — Phase 6
 
-Base middleware that validates `_token` on POST, PUT, PATCH, DELETE. Extend it in your application:
+**New:**
+- `src/Exceptions/HttpException.php` — thrown by `abort()`, carries status code and message
+- `src/Exceptions/ValidationException.php` — thrown by `validate()` on failure, carries errors + redirect URL
+- `helpers.php` — added `abort(int $code, string $message = ''): never`
+- `helpers.php` — added `validate(array $data, array $rules, string $back = ''): array`
 
-```php
-namespace App\Http\Middleware;
+**Modified:**
+- `src/Http/Kernel.php` — `handleException()` handles `ValidationException` and `HttpException` before custom handler
 
-use Luany\Framework\Http\Middleware\CsrfMiddleware as BaseCsrf;
+### v0.4.0 — Phase 2
 
-class VerifyCsrfToken extends BaseCsrf
-{
-    // URIs excluded from CSRF verification (e.g. webhooks)
-    protected array $except = [
-        '/api/webhook',
-        '/stripe/*',
-    ];
-}
-```
-
-Token sources (checked in order): POST body `_token` field, `X-CSRF-TOKEN` header.
-
-## Validation
-
-Zero-dependency validation engine. Validates data arrays against declarative rule sets.
-
-```php
-use Luany\Framework\Validation\Validator;
-
-$v = Validator::make($request->all(), [
-    'name'     => 'required|string|min:2|max:255',
-    'email'    => 'required|email|unique:users,email',
-    'password' => 'required|string|min:8|confirmed',
-    'role'     => 'required|in:admin,editor,viewer',
-    'age'      => 'required|numeric|min:18|max:120',
-]);
-
-if ($v->fails()) {
-    $errors = $v->errors();       // ['field' => ['error message', ...]]
-}
-
-$validated = $v->validated();     // only fields that passed validation
-$v->passes();                     // true if all rules pass
-```
-
-### Available Rules
-
-- `required` — field must be present and non-empty
-- `string` — field must be a string
-- `email` — field must be a valid email address
-- `numeric` — field must be numeric
-- `min:{n}` — minimum length (string) or minimum value (numeric)
-- `max:{n}` — maximum length (string) or maximum value (numeric)
-- `in:{a},{b},{c}` — field must be one of the listed values
-- `confirmed` — field must have a matching `{field}_confirmation` key
-- `unique:{table},{column}` — field must be unique (requires registered checker)
-
-### Unique Rule Setup
-
-The `unique` rule uses a callback to check for duplicates — no direct database coupling:
-
-```php
-use Luany\Framework\Validation\Validator;
-use Luany\Database\Connection;
-
-Validator::setUniqueChecker(function (string $table, string $column, mixed $value): bool {
-    return Connection::getInstance()
-        ->table($table)
-        ->where($column, '=', $value)
-        ->exists();
-});
-```
-
-## Old Input Helper
-
-Retrieve flashed input from the previous request (for repopulating forms after validation errors):
-
-```php
-old('email');                                   // previous email input
-old('name', 'default');                         // with fallback
-```
-
-```html
-<input name="email" value="<?= old('email') ?>">
-```
-
-## Environment
-
-```php
-use Luany\Framework\Support\Env;
-
-Env::load($app->basePath());                    // loads .env — idempotent
-Env::get('APP_NAME', 'Luany');                  // with default
-Env::get('APP_DEBUG', false);                   // auto-casts true/false/null
-Env::required(['DB_HOST', 'DB_NAME']);          // throws if missing
-
-env('APP_NAME', 'Luany');                       // global helper
-```
-
-## What's included
-
-- **luany/core** — HTTP Request/Response, middleware pipeline, router
-- **luany/lte** — AST-based template engine, zero regex parsing
-- **vlucas/phpdotenv** — Environment variable loading (encapsulated in `Env`)
-- **psr/log** — Logger interface (PSR-3)
-
-## Requirements
-
-- PHP 8.1+
-- Composer 2.0+
-
-## Global Helpers
-
-```php
-app('db');                       // resolve from container
-app();                           // Application instance
-base_path('config/app.php');     // absolute path
-config('app.name');              // configuration value
-session('user_id');              // session value
-csrf_token();                    // CSRF token
-old('email');                    // flashed old input
-view('pages.home', $data);       // render LTE view
-redirect('/dashboard');           // redirect Response
-response('OK', 200);             // Response instance
-env('APP_NAME', 'Luany');        // environment variable
-__('nav.home');                  // translation
-locale();                        // current locale
-```
-
-## Testing
-
-```bash
-composer install
-vendor/bin/phpunit
-```
-
-164 tests, 205 assertions.
-
-## Changelog
-
-### v0.4.0
-- `Config` — file-based configuration loader with dot-notation access (`Config::get('app.name')`), runtime overrides (`set()`), `has()`, `all()`; auto-registered in Kernel boot as `'config'`
-- `SessionInterface` — pluggable session contract: `start()`, `get()`, `set()`, `has()`, `forget()`, `flash()`, `regenerate()`, `save()`, `destroy()`, `getId()`, `all()`
-- `FileSession` — file-based session driver implementing `SessionInterface`; flash data aging (new → old → purged per request); auto-registered in Kernel boot as `'session'`
-- `CsrfToken` — CSRF token service: `token()`, `validate()`, `regenerate()`; session-backed, timing-safe comparison via `hash_equals()`; auto-registered as `'csrf'`
-- `CsrfMiddleware` — base middleware for CSRF protection; validates `_token` on POST/PUT/PATCH/DELETE; supports URI exclusion patterns (exact + wildcard); extracts token from body or `X-CSRF-TOKEN` header
-- `Validator` — zero-dependency validation engine: `Validator::make($data, $rules)` with rules: `required`, `string`, `email`, `numeric`, `min`, `max`, `in`, `confirmed`, `unique`; multibyte-safe string length checks; pluggable `unique` checker via `setUniqueChecker()`
-- `Kernel::boot()` — now registers Config, Session, and CsrfToken singletons before LTE and routes
-- `helpers.php` — added `config()`, `session()`, `csrf_token()`, `old()` global helpers
-- 164 tests, 205 assertions
-
-### v0.3.1
-- `Kernel::handle()` — exceptions thrown inside global middleware pipeline are now caught; outer `try/catch` wraps the entire pipeline so middleware exceptions are routed through `Handler::render()`; inner `try/catch` in `then()` callback preserved for route exceptions (allowing middleware "after" phase to decorate error responses)
-- 81 tests, 93 assertions
-
-### v0.3.0
-- `Translator` — migrated from skeleton to `Luany\Framework\Support\Translator`; zero external dependencies, flat key/value files, `:placeholder` replacements, fallback locale, idempotent file loading
-- `LocaleMiddleware` — migrated to `Luany\Framework\Http\Middleware\LocaleMiddleware`; detects locale via cookie → Accept-Language → APP_LOCALE env → fallback; uses `Request::cookie()` and `Request::header()`, no superglobals
-- `__()` helper — added to `helpers.php`; resolves via `app('translator')`
-- `locale()` helper — added to `helpers.php`; returns active locale code
-- `Kernel::handle()` — exception handling moved inside `then()` callback; global middleware now wraps the full dispatch including error responses
-- `Kernel::handleException()` — explicit `RouteNotFoundException` fallback when Handler is not bound in container
-- `luany/core` bumped to `^0.2.3`
-- 80 tests, 91 assertions
-
-### v0.2.2
-- `Handler::debugPage()` — full redesign: full-screen layout, animated radial gradients, 48px grid overlay
-- Debug page — large exception name with namespace/shortName split, meta row (file, line, method, URI, time)
-- Debug page — branded SVG favicon as inline base64 data URI, no external asset dependencies
-- Debug page — "Debug Mode" badge with animated pulse dot, self-contained regardless of app boot state
-
-### v0.2.1
-- `Exceptions/Handler` — abstract base exception handler with `report()` and `render()`
-- `Kernel::handle()` — now wraps dispatch in try/catch, delegates to `Handler` via container
-- `Kernel::handleException()` — private method, calls `report()` then `render()`
-- Debug page — branded Luany error page with stack trace (only in `APP_DEBUG=true`)
-- 80 tests, 91 assertions — `ExceptionHandlerTest` added
-
-### v0.2.0
-- README: Why Luany, Design Principles, compiler-grade explained, status notice
-- Routes section: full routing API documented (all verbs, resource, apiResource, view, groups, named)
-- Views section: all three return patterns documented (Response::make, string, array)
-- `helpers.php`: fixed PHP 8.4 nullable deprecation (`?string $abstract`)
-
-### v0.1.0
-- `Application` — DI container with bind, singleton, instance, make, auto-resolve
-- `ServiceProviderInterface` / `ServiceProvider` — two-phase lifecycle (register → boot)
-- `Application::register()` / `Application::bootProviders()` — provider management
-- `Kernel` — HTTP kernel with boot/handle/terminate; calls `bootProviders()` internally
-- `KernelInterface` / `ApplicationInterface` / `ServiceProviderInterface` — public contracts
-- `Env` — encapsulated phpdotenv wrapper with value casting and `required()` validation
-- Global middleware pipeline — applied before routing, full short-circuit support
-- LTE engine registered automatically at boot via `Route::setViewRenderer()`
-- `helpers.php` — `app()`, `env()`, `base_path()`, `view()`, `redirect()`, `response()`
-- 56 unit tests — `ApplicationTest`, `EnvTest`, `KernelTest`, `ServiceProviderTest`
-
-## License
-
-MIT — see [LICENSE](LICENSE) for details.
+IoC container (`Application`), HTTP Kernel, `FileSession`, `Config`, `CsrfToken`, `CsrfMiddleware`, `Validator` (9 rules), `Translator`, `LocaleMiddleware`. Full `helpers.php`: `app()`, `env()`, `base_path()`, `view()`, `redirect()`, `response()`, `config()`, `session()`, `csrf_token()`, `old()`, `__()`, `locale()`.

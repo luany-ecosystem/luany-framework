@@ -6,7 +6,6 @@ use Luany\Framework\Support\Config;
 use PHPUnit\Framework\TestCase;
 
 /**
- * @covers \Luany\Framework\Support\Config
  */
 class ConfigTest extends TestCase
 {

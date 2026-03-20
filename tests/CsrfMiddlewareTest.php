@@ -10,7 +10,6 @@ use Luany\Framework\Security\CsrfToken;
 use PHPUnit\Framework\TestCase;
 
 /**
- * @covers \Luany\Framework\Http\Middleware\CsrfMiddleware
  */
 class CsrfMiddlewareTest extends TestCase
 {
