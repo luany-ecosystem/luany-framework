@@ -48,7 +48,7 @@ class Env
     {
         $value = $_ENV[$key] ?? $_SERVER[$key] ?? getenv($key);
 
-        if ($value === false || $value === null) {
+        if ($value === false) {
             return $default;
         }
 
@@ -66,13 +66,14 @@ class Env
      *
      * @throws \RuntimeException if any key is missing
      */
+    /** @param array<int, string> $keys */
     public static function required(array $keys): void
     {
         $missing = [];
 
         foreach ($keys as $key) {
             $value = $_ENV[$key] ?? $_SERVER[$key] ?? getenv($key);
-            if ($value === false || $value === null || $value === '') {
+            if ($value === false || $value === '') {
                 $missing[] = $key;
             }
         }

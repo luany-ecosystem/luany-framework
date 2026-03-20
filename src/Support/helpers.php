@@ -63,6 +63,7 @@ if (!function_exists('view')) {
      *   view('pages.home', ['user' => $user])
      *   return Response::make(view('pages.dashboard', $data));
      */
+    /** @param array<string, mixed> $data */
     function view(string $name, array $data = []): string
     {
         /** @var \Luany\Lte\Engine $engine */
@@ -107,6 +108,7 @@ if (!function_exists('__')) {
      *   __('nav.home')
      *   __('footer.copyright', ['year' => date('Y'), 'name' => 'Luany'])
      */
+    /** @param array<string, string> $replace */
     function __(string $key, array $replace = []): string
     {
         /** @var \Luany\Framework\Support\Translator $translator */

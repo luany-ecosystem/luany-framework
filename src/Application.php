@@ -29,16 +29,16 @@ use Luany\Framework\Contracts\ServiceProviderInterface;
  */
 class Application implements ApplicationInterface
 {
-    /** Transient factory bindings */
+    /** @var array<string, callable(static): mixed> Transient factory bindings */
     private array $bindings = [];
 
-    /** Shared singleton factories */
+    /** @var array<string, callable(static): mixed> Shared singleton factories */
     private array $singletonFactories = [];
 
-    /** Resolved singleton instances */
+    /** @var array<string, mixed> Resolved singleton instances */
     private array $instances = [];
 
-    /** Registered service providers */
+    /** @var array<int, \Luany\Framework\Contracts\ServiceProviderInterface> Registered service providers */
     private array $providers = [];
 
     /** Whether bootProviders() has been called */
@@ -48,7 +48,7 @@ class Application implements ApplicationInterface
     private string $basePath;
 
     /** Global application instance */
-    private static ?self $instance = null;
+    protected static ?self $instance = null;
 
     public function __construct(string $basePath)
     {
@@ -71,7 +71,7 @@ class Application implements ApplicationInterface
         if (static::$instance === null) {
             throw new \RuntimeException('Application has not been instantiated.');
         }
-        return static::$instance;
+        return static::$instance; // @phpstan-ignore return.type
     }
 
     // ── Service Providers ─────────────────────────────────────────────────────
@@ -108,6 +108,7 @@ class Application implements ApplicationInterface
     /**
      * Get all registered service providers.
      */
+    /** @return array<int, \Luany\Framework\Contracts\ServiceProviderInterface> */
     public function getProviders(): array
     {
         return $this->providers;

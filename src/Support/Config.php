@@ -23,6 +23,7 @@ namespace Luany\Framework\Support;
 class Config
 {
     /** Loaded configuration items */
+    /** @var array<string, mixed> */
     private array $items = [];
 
     /**

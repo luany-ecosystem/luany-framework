@@ -50,7 +50,7 @@ class Validator
      *
      * @var callable|null
      */
-    private static $uniqueChecker = null;
+    protected static $uniqueChecker = null;
 
     /**
      * @param array<string, mixed>  $data  Input data to validate
@@ -198,6 +198,7 @@ class Validator
      *
      * @return string|null Error message or null if valid
      */
+    /** @param array{name: string, params: array<string>} $rule */
     private function validateRule(string $field, mixed $value, array $rule): ?string
     {
         $name = $rule['name'];
@@ -265,6 +266,7 @@ class Validator
         return null;
     }
 
+    /** @param array<string> $params */
     private function validateMin(string $field, mixed $value, array $params): ?string
     {
         if ($value === null || $value === '') {
@@ -286,6 +288,7 @@ class Validator
         return null;
     }
 
+    /** @param array<string> $params */
     private function validateMax(string $field, mixed $value, array $params): ?string
     {
         if ($value === null || $value === '') {
@@ -307,6 +310,7 @@ class Validator
         return null;
     }
 
+    /** @param array<string> $params */
     private function validateIn(string $field, mixed $value, array $params): ?string
     {
         if ($value === null || $value === '') {
@@ -332,6 +336,7 @@ class Validator
         return null;
     }
 
+    /** @param array<string> $params */
     private function validateUnique(string $field, mixed $value, array $params): ?string
     {
         if ($value === null || $value === '') {
