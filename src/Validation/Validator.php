@@ -167,6 +167,7 @@ class Validator
     /**
      * Parse a pipe-separated rule string into individual rules.
      *
+     * @param string|array<string> $ruleString
      * @return array<array{name: string, params: array<string>}>
      */
     private function parseRules(string|array $ruleString): array
