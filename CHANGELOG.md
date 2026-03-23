@@ -6,7 +6,7 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
-## [Unreleased] — next/v1
+## [1.0.0] — 2026-03-23
 
 ### Added
 - `HttpException` — thrown by `abort()`, carries HTTP status code and a default message per code (400–500). Caught by `Kernel::handleException()`.
