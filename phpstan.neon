@@ -9,9 +9,6 @@ parameters:
         # Kernel::handleException() references MethodNotAllowedException from luany/core.
         # luany/core is a path dependency (not yet on Packagist), so PHPStan cannot
         # resolve it even with bootstrapFiles. Resolves automatically after v1.0.0 release.
-        - '#Class Luany\\Core\\Exceptions\\MethodNotAllowedException not found#'
-        - '#Call to method getAllowHeaderValue\(\) on an unknown class Luany\\Core\\Exceptions\\MethodNotAllowedException#'
-
         # Validator::make() uses new static() to allow applications to subclass Validator
         # and override make() with custom behaviour. This is documented PHP OOP — not a bug.
         - '#Unsafe usage of new static\(\)#'
