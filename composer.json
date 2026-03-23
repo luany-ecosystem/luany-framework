@@ -22,8 +22,8 @@
     "homepage": "https://github.com/luany-ecosystem/luany-framework",
     "require": {
         "php": ">=8.2",
-        "luany/core": "^0.2",
-        "luany/lte": "^0.2",
+        "luany/core": "^1.0",
+        "luany/lte": "^1.0",
         "vlucas/phpdotenv": "^5.6",
         "psr/log": "^3.0"
     },
