@@ -50,7 +50,7 @@ class Validator
      *
      * @var callable|null
      */
-    private static $uniqueChecker = null;
+    protected static $uniqueChecker = null;
 
     /**
      * @param array<string, mixed>  $data  Input data to validate
@@ -167,18 +167,34 @@ class Validator
     /**
      * Parse a pipe-separated rule string into individual rules.
      *
+     * @param string|array<string> $ruleString
      * @return array<array{name: string, params: array<string>}>
      */
-    private function parseRules(string $ruleString): array
+    private function parseRules(string|array $ruleString): array
     {
-        $rules = [];
+        if (is_array($ruleString)) {
+            // Array format: ['required', 'string', 'max:255']
+            $rules = [];
+            foreach ($ruleString as $rule) {
+                $rule = trim((string) $rule);
+                if ($rule === '') continue;
+                if (str_contains($rule, ':')) {
+                    [$name, $paramString] = explode(':', $rule, 2);
+                    $params = explode(',', $paramString);
+                } else {
+                    $name = $rule;
+                    $params = [];
+                }
+                $rules[] = ['name' => $name, 'params' => $params];
+            }
+            return $rules;
+        }
 
+        // Existing pipe-separated string logic
+        $rules = [];
         foreach (explode('|', $ruleString) as $rule) {
             $rule = trim($rule);
-            if ($rule === '') {
-                continue;
-            }
-
+            if ($rule === '') continue;
             if (str_contains($rule, ':')) {
                 [$name, $paramString] = explode(':', $rule, 2);
                 $params = explode(',', $paramString);
@@ -186,18 +202,16 @@ class Validator
                 $name = $rule;
                 $params = [];
             }
-
             $rules[] = ['name' => $name, 'params' => $params];
         }
-
         return $rules;
     }
-
     /**
      * Validate a single rule against a field value.
      *
      * @return string|null Error message or null if valid
      */
+    /** @param array{name: string, params: array<string>} $rule */
     private function validateRule(string $field, mixed $value, array $rule): ?string
     {
         $name = $rule['name'];
@@ -265,6 +279,7 @@ class Validator
         return null;
     }
 
+    /** @param array<string> $params */
     private function validateMin(string $field, mixed $value, array $params): ?string
     {
         if ($value === null || $value === '') {
@@ -286,6 +301,7 @@ class Validator
         return null;
     }
 
+    /** @param array<string> $params */
     private function validateMax(string $field, mixed $value, array $params): ?string
     {
         if ($value === null || $value === '') {
@@ -307,6 +323,7 @@ class Validator
         return null;
     }
 
+    /** @param array<string> $params */
     private function validateIn(string $field, mixed $value, array $params): ?string
     {
         if ($value === null || $value === '') {
@@ -332,6 +349,7 @@ class Validator
         return null;
     }
 
+    /** @param array<string> $params */
     private function validateUnique(string $field, mixed $value, array $params): ?string
     {
         if ($value === null || $value === '') {

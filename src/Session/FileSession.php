@@ -47,7 +47,9 @@ class FileSession implements SessionInterface
             if (!is_dir($this->savePath)) {
                 mkdir($this->savePath, 0700, true);
             }
-            session_save_path($this->savePath);
+            if (session_status() === PHP_SESSION_NONE) {
+                session_save_path($this->savePath);
+            }
         }
 
         if (session_status() === PHP_SESSION_NONE) {

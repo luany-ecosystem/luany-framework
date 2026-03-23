@@ -21,7 +21,7 @@ namespace Luany\Framework\Support;
  */
 class Translator
 {
-    /** Loaded translation tables keyed by locale. */
+    /** @var array<string, array<string, string>> Loaded translation tables keyed by locale. */
     private array $tables = [];
 
     private string $locale;
@@ -29,8 +29,12 @@ class Translator
     private readonly string $langPath;
 
     /** Supported locales — locales outside this list are rejected. */
+    /** @var array<int, string> */
     private array $supported;
 
+    /**
+     * @param array<int, string> $supported
+     */
     public function __construct(
         string $langPath,
         string $locale    = 'en',
@@ -53,6 +57,7 @@ class Translator
      * nor the fallback locale have a translation — so pages
      * never silently show empty strings.
      */
+    /** @param array<string, string> $replace */
     public function get(string $key, array $replace = []): string
     {
         $value = $this->tables[$this->locale][$key]
@@ -95,6 +100,7 @@ class Translator
         return $this->fallback;
     }
 
+    /** @return array<int, string> */
     public function getSupported(): array
     {
         return $this->supported;

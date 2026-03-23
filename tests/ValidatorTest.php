@@ -6,7 +6,6 @@ use Luany\Framework\Validation\Validator;
 use PHPUnit\Framework\TestCase;
 
 /**
- * @covers \Luany\Framework\Validation\Validator
  */
 class ValidatorTest extends TestCase
 {

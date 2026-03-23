@@ -37,6 +37,7 @@ class LocaleMiddleware implements MiddlewareInterface
 
     // ── Private ───────────────────────────────────────────────
 
+    /** @param array<int, string> $supported */
     private function detect(Request $request, array $supported): string
     {
         // 1. Cookie — explicit user preference
@@ -68,6 +69,7 @@ class LocaleMiddleware implements MiddlewareInterface
      * Parse Accept-Language header and return the best supported locale.
      * Handles: 'pt-PT,pt;q=0.9,en;q=0.8' → 'pt'
      */
+    /** @param array<int, string> $supported */
     private function parseAcceptLanguage(string $header, array $supported): ?string
     {
         $parts  = explode(',', $header);

@@ -63,6 +63,7 @@ if (!function_exists('view')) {
      *   view('pages.home', ['user' => $user])
      *   return Response::make(view('pages.dashboard', $data));
      */
+    /** @param array<string, mixed> $data */
     function view(string $name, array $data = []): string
     {
         /** @var \Luany\Lte\Engine $engine */
@@ -107,6 +108,7 @@ if (!function_exists('__')) {
      *   __('nav.home')
      *   __('footer.copyright', ['year' => date('Y'), 'name' => 'Luany'])
      */
+    /** @param array<string, string> $replace */
     function __(string $key, array $replace = []): string
     {
         /** @var \Luany\Framework\Support\Translator $translator */
@@ -197,5 +199,68 @@ if (!function_exists('old')) {
         $oldInput = $session->get('_old_input', []);
 
         return $oldInput[$key] ?? $default;
+    }
+}
+
+if (!function_exists('validate')) {
+    /**
+     * Validate data against a rule set.
+     *
+     * On success — returns the validated data array (only validated fields).
+     * On failure — flashes errors + old input to session, then throws
+     *              ValidationException which the Kernel converts to a redirect.
+     *
+     * Usage:
+     *   $data = validate($request->body(), [
+     *       'name'  => 'required|string|min:2|max:255',
+     *       'email' => 'required|email|unique:users,email',
+     *   ], '/users/create');
+     *
+     *   // $data contains only the validated fields — safe to use directly.
+     *   User::create($data);
+     *
+     * @param  array<string, mixed>  $data       Data to validate (e.g. $request->body())
+     * @param  array<string, string> $rules       Validation rules per field
+     * @param  string                $redirectTo  URL to redirect back to on failure.
+     *                                            Defaults to HTTP_REFERER or '/'.
+     * @return array<string, mixed>  Validated data
+     * @throws \Luany\Framework\Exceptions\ValidationException on failure
+     */
+    function validate(array $data, array $rules, string $redirectTo = ''): array
+    {
+        $v = \Luany\Framework\Validation\Validator::make($data, $rules);
+
+        if ($v->passes()) {
+            return $v->validated();
+        }
+
+        /** @var \Luany\Framework\Contracts\SessionInterface $session */
+        $session = app('session');
+        $session->flash('errors', $v->errors());
+        $session->flash('_old_input', $data);
+
+        $url = $redirectTo !== '' ? $redirectTo : ($_SERVER['HTTP_REFERER'] ?? '/');
+
+        throw new \Luany\Framework\Exceptions\ValidationException($v->errors(), $url);
+    }
+}
+
+if (!function_exists('abort')) {
+    /**
+     * Abort the request with an HTTP error response.
+     *
+     * Throws an HttpException which the Kernel catches and converts
+     * into the appropriate HTTP Response (404, 403, 500, etc.).
+     *
+     * Usage:
+     *   abort(404);
+     *   abort(403, 'Forbidden');
+     *   abort(422, 'Unprocessable content');
+     *
+     * @throws \Luany\Framework\Exceptions\HttpException
+     */
+    function abort(int $code, string $message = ''): never
+    {
+        throw new \Luany\Framework\Exceptions\HttpException($code, $message);
     }
 }
