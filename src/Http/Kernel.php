@@ -4,6 +4,7 @@ namespace Luany\Framework\Http;
 
 use Luany\Core\Http\Request;
 use Luany\Core\Http\Response;
+use Luany\Core\Middleware\MiddlewareInterface;
 use Luany\Core\Middleware\Pipeline;
 use Luany\Core\Routing\Route;
 use Luany\Framework\Application;
@@ -42,7 +43,10 @@ class Kernel implements KernelInterface
      * Global middleware — applied to every request.
      * Override in your application's Kernel extension.
      *
-     * @var array<class-string>
+     * Entries are class names (resolved through the container, so constructor
+     * dependencies are injected) or MiddlewareInterface instances.
+     *
+     * @var array<int, class-string|MiddlewareInterface>
      */
     protected array $middleware = [];
 
@@ -68,6 +72,7 @@ class Kernel implements KernelInterface
         $this->registerSession();
         $this->registerCsrf();
         $this->registerLte();
+        $this->registerResolver();
         $this->loadRoutes();
         $this->app->bootProviders();
 
@@ -87,7 +92,7 @@ class Kernel implements KernelInterface
 
             return (new Pipeline())
                 ->send($request)
-                ->through($this->middleware)
+                ->through($this->resolveMiddleware($this->middleware))
                 ->then(function (Request $req) {
                     try {
                         return Route::handle($req);
@@ -141,6 +146,70 @@ class Kernel implements KernelInterface
     }
 
     // ── Private ───────────────────────────────────────────────────────────────────────
+
+    /**
+     * Resolve a class through the container (autowiring constructor dependencies).
+     * Used as the luany/core resolver for controllers and middleware.
+     */
+    public function resolveClass(string $class): object
+    {
+        $object = $this->app->make($class);
+
+        if (!is_object($object)) {
+            throw new \RuntimeException("Container entry [{$class}] did not resolve to an object.");
+        }
+
+        return $object;
+    }
+
+    /**
+     * Register the container as luany/core's class resolver so controllers and
+     * class-name middleware get their constructor dependencies injected.
+     *
+     * The hook exists from luany/core 1.1; on 1.0 this is a no-op (global
+     * middleware is still resolved through the container by the Kernel).
+     */
+    private function registerResolver(): void
+    {
+        $resolver = fn (string $class): object => $this->resolveClass($class);
+
+        // Guarded so the framework stays installable with luany/core 1.0.
+        $setDefault = [Pipeline::class, 'setDefaultResolver'];
+        if (method_exists(Pipeline::class, 'setDefaultResolver') && is_callable($setDefault)) {
+            $setDefault($resolver);
+        }
+
+        $router    = Route::router();
+        $setRouter = [$router, 'setResolver'];
+        if (method_exists($router, 'setResolver') && is_callable($setRouter)) {
+            $setRouter($resolver);
+        }
+    }
+
+    /**
+     * Instantiate global middleware through the container, so constructor
+     * injection works regardless of the installed luany/core version.
+     *
+     * @param  array<int, class-string|MiddlewareInterface> $middleware
+     * @return array<int, MiddlewareInterface>
+     */
+    private function resolveMiddleware(array $middleware): array
+    {
+        $resolved = [];
+
+        foreach ($middleware as $entry) {
+            $instance = is_string($entry) ? $this->resolveClass($entry) : $entry;
+
+            if (!$instance instanceof MiddlewareInterface) {
+                $name = is_string($entry) ? $entry : get_debug_type($entry);
+                throw new \RuntimeException("Middleware [{$name}] must implement MiddlewareInterface");
+            }
+
+            $resolved[] = $instance;
+        }
+
+        return $resolved;
+    }
 
     private function registerConfig(): void
     {

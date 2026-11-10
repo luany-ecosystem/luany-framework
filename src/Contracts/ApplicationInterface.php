@@ -9,8 +9,8 @@ namespace Luany\Framework\Contracts;
  * Defines how services are registered and resolved.
  *
  * Deliberately minimal — builds only what the framework needs.
- * Not PSR-11 to avoid external interface dependency,
- * but compatible in spirit: bind, singleton, make.
+ * The concrete Application additionally implements
+ * Psr\Container\ContainerInterface (get/has) and reflection autowiring.
  */
 interface ApplicationInterface
 {
