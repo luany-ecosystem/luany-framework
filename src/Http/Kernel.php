@@ -10,6 +10,7 @@ use Luany\Core\Middleware\MiddlewareInterface;
 use Luany\Core\Middleware\Pipeline;
 use Luany\Core\Routing\Route;
 use Luany\Framework\Application;
+use Luany\Framework\Container\MissingModelException;
 use Luany\Framework\Contracts\KernelInterface;
 use Luany\Framework\Contracts\SessionInterface;
 use Luany\Framework\Exceptions\Handler;
@@ -274,6 +275,25 @@ class Kernel implements KernelInterface
         // Guarded so the framework stays installable with luany/core 1.0.
         self::callIfExists(Pipeline::class, 'setDefaultResolver', $resolver);
         self::callIfExists(Route::router(), 'setResolver', $resolver);
+
+        // luany/core 1.2+: resolve action arguments through the container —
+        // services by type, route parameters by name, the rest by position.
+        self::callIfExists(Route::router(), 'setInvoker', $this->actionInvoker());
+    }
+
+    /**
+     * @return \Closure(callable, Request, array<string, mixed>): mixed
+     */
+    private function actionInvoker(): \Closure
+    {
+        return function (callable $action, Request $request, array $params): mixed {
+            try {
+                return $this->app->call($action, array_merge([$request], $params));
+            } catch (MissingModelException $e) {
+                // A route-model binding found nothing (e.g. User::find($id) === null).
+                throw new HttpException(404, 'Not Found', $e);
+            }
+        };
     }
 
     /**

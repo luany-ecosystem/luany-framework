@@ -3,6 +3,7 @@
 namespace Luany\Framework;
 
 use Luany\Framework\Container\CircularDependencyException;
+use Luany\Framework\Container\MissingModelException;
 use Luany\Framework\Container\ContainerException;
 use Luany\Framework\Container\NotFoundException;
 use Luany\Framework\Contracts\ApplicationInterface;
@@ -277,6 +278,108 @@ class Application implements ApplicationInterface, ContainerInterface
         return $reflection->newInstanceArgs($arguments);
     }
 
+    /**
+     * Call a function, closure, invokable object or [object|class, method],
+     * resolving its parameters:
+     *
+     *   1. by name      — string keys of $parameters (e.g. route parameters)
+     *   2. by type      — a $parameters value that is an instance of the
+     *                     declared class, otherwise the container (autowiring)
+     *   3. by position  — the remaining $parameters values, in order
+     *   4. default value, then null for nullable parameters
+     *
+     * Rule 3 keeps old positional signatures working: an action written as
+     * show($request, $slug) for route /posts/{id} still receives the request
+     * and the id in order.
+     *
+     * @param callable|array{0: object|string, 1: string} $callable
+     * @param array<int|string, mixed>                    $parameters
+     *
+     * @throws MissingModelException When a named value is null but the parameter requires an object.
+     * @throws ContainerException    When a required parameter cannot be resolved.
+     */
+    public function call(callable|array $callable, array $parameters = []): mixed
+    {
+        if (is_array($callable) && is_string($callable[0])) {
+            $callable[0] = $this->make($callable[0]);
+        }
+
+        $reflection = $this->reflectCallable($callable);
+        $label      = $this->describeCallable($reflection);
+
+        // Ordered queue of candidates; string keys may also be matched by name.
+        $queue     = $parameters;
+        $arguments = [];
+
+        foreach ($reflection->getParameters() as $parameter) {
+            $name = $parameter->getName();
+
+            if ($parameter->isVariadic()) {
+                foreach ($queue as $value) {
+                    $arguments[] = $value;
+                }
+                $queue = [];
+                break;
+            }
+
+            // 1. By name
+            if (array_key_exists($name, $queue)) {
+                $value = $queue[$name];
+                unset($queue[$name]);
+
+                if ($value === null && !$parameter->allowsNull() && !$parameter->isDefaultValueAvailable()) {
+                    $types = $this->classTypesOf($parameter);
+                    if ($types !== []) {
+                        throw new MissingModelException($name, $types[0]);
+                    }
+                }
+
+                $arguments[] = $value ?? ($parameter->isDefaultValueAvailable() ? $parameter->getDefaultValue() : null);
+                continue;
+            }
+
+            // 2. By type
+            $types = $this->classTypesOf($parameter);
+            if ($types !== []) {
+                foreach ($queue as $key => $value) {
+                    foreach ($types as $type) {
+                        if ($value instanceof $type) {
+                            unset($queue[$key]);
+                            $arguments[] = $value;
+                            continue 3;
+                        }
+                    }
+                }
+
+                $arguments[] = $this->resolveParameter($label, $parameter, []);
+                continue;
+            }
+
+            // 3. By position
+            if ($queue !== []) {
+                $key = array_key_first($queue);
+                $arguments[] = $queue[$key];
+                unset($queue[$key]);
+                continue;
+            }
+
+            // 4. Defaults
+            if ($parameter->isDefaultValueAvailable()) {
+                $arguments[] = $parameter->getDefaultValue();
+                continue;
+            }
+
+            if ($parameter->allowsNull()) {
+                $arguments[] = null;
+                continue;
+            }
+
+            throw new ContainerException("Unresolvable parameter [\${$name}] of [{$label}].");
+        }
+
+        return $callable(...$arguments);
+    }
+
     // ── Path helpers ──────────────────────────────────────────────────────────
 
     public function basePath(string $path = ''): string
@@ -388,6 +491,39 @@ class Application implements ApplicationInterface, ContainerInterface
         }
 
         throw new ContainerException("Unresolvable dependency [\${$name}] in class [{$class}].");
+    }
+
+    /**
+     * @param callable|array{0: object, 1: string} $callable
+     */
+    private function reflectCallable(callable|array $callable): \ReflectionFunctionAbstract
+    {
+        if ($callable instanceof \Closure) {
+            return new \ReflectionFunction($callable);
+        }
+
+        if (is_array($callable)) {
+            return new \ReflectionMethod($callable[0], $callable[1]);
+        }
+
+        if (is_object($callable)) {
+            return new \ReflectionMethod($callable, '__invoke');
+        }
+
+        if (is_string($callable) && str_contains($callable, '::')) {
+            return new \ReflectionMethod($callable);
+        }
+
+        return new \ReflectionFunction(\Closure::fromCallable($callable));
+    }
+
+    private function describeCallable(\ReflectionFunctionAbstract $reflection): string
+    {
+        if ($reflection instanceof \ReflectionMethod) {
+            return $reflection->getDeclaringClass()->getName() . '::' . $reflection->getName();
+        }
+
+        return $reflection->getName();
     }
 
     /**
