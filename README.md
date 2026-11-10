@@ -20,7 +20,9 @@
 9. [Exception Handling](#9-exception-handling)
 10. [Helpers](#10-helpers)
 11. [Service Providers](#11-service-providers)
-12. [Changelog](#12-changelog)
+12. [Localisation](#12-localisation)
+13. [Logging](#13-logging)
+14. [Changelog](#14-changelog)
 
 ---
 
@@ -67,13 +69,48 @@ $cache = app('cache'); // via helper
 
 The `Application` instance is accessible globally via `app()`.
 
-### Auto-resolution
+### Autowiring
 
-Classes with no constructor dependencies are auto-resolved:
+Unbound concrete classes are built via reflection. Constructor parameters are
+resolved from their class/interface type; scalar parameters use their default
+value and nullable parameters fall back to `null`:
 
 ```php
-$handler = $app->make(SomeHandler::class);
+class ReportService
+{
+    public function __construct(Mailer $mailer, LoggerInterface $log, int $year = 2026) {}
+}
+
+$service = $app->make(ReportService::class);                  // autowired
+$service = $app->make(ReportService::class, ['year' => 2025]); // named override
+
+// Interface → implementation
+$app->bind(PaymentGateway::class, StripeGateway::class);
+$app->singleton(Mailer::class);   // shared, autowired
 ```
+
+Circular dependencies (`A → B → A`) throw `Container\CircularDependencyException`
+with the full chain.
+
+### PSR-11
+
+`Application` implements `Psr\Container\ContainerInterface`:
+
+```php
+$app->get(Mailer::class);   // same as make()
+$app->has('db');            // true only for explicit bind/singleton/instance
+```
+
+`get()`/`make()` throw `Container\NotFoundException` (PSR `NotFoundExceptionInterface`)
+when nothing is bound and the class does not exist, and `Container\ContainerException`
+when an entry cannot be built. Both extend `RuntimeException`.
+
+### Controllers and middleware
+
+During `boot()` the Kernel registers the container as luany/core's class
+resolver (`Pipeline::setDefaultResolver()` / `Router::setResolver()`, luany/core
+>= 1.1), so controllers and route middleware get constructor injection. Global
+Kernel middleware is always resolved through the container, also on luany/core 1.0.
 
 ### Service Provider lifecycle
 
@@ -93,6 +130,7 @@ $app->storagePath('logs')    // /var/www/my-app/storage/logs
 $app->cachePath('views')     // /var/www/my-app/storage/cache/views
 $app->viewsPath()            // /var/www/my-app/views
 $app->routesPath()           // /var/www/my-app/routes
+$app->langPath()             // /var/www/my-app/lang
 ```
 
 ---
@@ -114,14 +152,21 @@ $kernel->terminate($request, $response);
 
 ### Boot sequence
 
-`boot()` runs in order:
+`boot()` registers the framework defaults, then loads routes and boots providers.
+Every default is registered **only if a service provider has not already bound
+it** (under either the string key or the class name), so providers can replace
+any of them:
 
-1. `registerConfig()` — loads `config/*.php`
-2. `registerSession()` — starts `FileSession`
-3. `registerCsrf()` — binds `CsrfToken`
-4. `registerLte()` — binds the LTE view engine
-5. `loadRoutes()` — requires `routes/http.php`
-6. `bootProviders()` — calls `boot()` on all registered providers
+| Key | Class alias | Default |
+|---|---|---|
+| `config` | `Support\Config` | loads `config/*.php` |
+| `session` | `Contracts\SessionInterface` | `FileSession` (options from `config/session.php`) |
+| `csrf` | `Security\CsrfToken` | session-backed token |
+| `view` | `Luany\Lte\Engine` | LTE engine (also tells `Luany\Lte\Runtime` about debug mode, lte >= 1.1) |
+| `translator` | `Support\Translator` | `lang/{locale}.php` (see §12) |
+| `log` | `Psr\Log\LoggerInterface` | `Log\FileLogger` (see §13) |
+
+Then: wire the container as luany/core resolver → load `routes/*.php` → `bootProviders()`.
 
 ### Global middleware
 
@@ -132,13 +177,14 @@ Override in your application kernel:
 class Kernel extends \Luany\Framework\Http\Kernel
 {
     protected array $middleware = [
-        LocaleMiddleware::class,
-        CsrfMiddleware::class,
+        \Luany\Framework\Http\Middleware\LocaleMiddleware::class,
+        \Luany\Framework\Http\Middleware\CsrfMiddleware::class,
     ];
 }
 ```
 
-Middleware runs on every request, before routing.
+Middleware runs on every request, before routing. Entries are resolved through
+the container, so constructor dependencies are injected.
 
 ---
 
@@ -151,9 +197,12 @@ Loads PHP files from `config/` and provides dot-notation access.
 return ['name' => 'My App', 'debug' => false];
 
 // Usage
-config('app.name')           // 'My App'
-config('app.missing', 'def') // 'def'
-config('app.debug')          // false
+config('app.name')              // 'My App'
+config('app.missing', 'def')    // 'def'
+config('app.debug')             // false
+config()                        // the Config repository
+config()->set('app.debug', true)
+config(['app.debug' => true])   // set one or more values
 ```
 
 Direct usage:
@@ -185,8 +234,38 @@ $session->get('user_id');
 $session->has('user_id');
 $session->forget('user_id');
 $session->flash('success', 'Saved!');   // lives for one request
-$session->regenerate();                  // new session ID
+$session->regenerate();                  // new session ID (call on login/logout)
 $session->destroy();
+```
+
+### Security defaults
+
+`FileSession` configures PHP before `session_start()`:
+
+| Option | Default |
+|---|---|
+| `httponly` | `true` |
+| `samesite` | `'Lax'` |
+| `secure` | `null` = automatic (on when the request is HTTPS) |
+| `strict_mode` | `true` (`session.use_strict_mode`) |
+| `only_cookies` | `true` (`session.use_only_cookies`, no trans-sid) |
+| `name`, `lifetime`, `path`, `domain` | PHP defaults / `0` / `'/'` / `''` |
+
+Override them in an optional `config/session.php` (plus `save_path`):
+
+```php
+return [
+    'name'     => 'luany_session',
+    'secure'   => true,   // behind a TLS-terminating proxy
+    'samesite' => 'Strict',
+];
+```
+
+On login and logout, rotate both the session ID and the CSRF token:
+
+```php
+session()->regenerate();
+app('csrf')->regenerate();
 ```
 
 Flash data is available on the next request only:
@@ -204,6 +283,9 @@ Old input is automatically available via `old()` after a failed `validate()`:
 ```php
 <input name="email" value="{{ old('email') }}">
 ```
+
+Sensitive fields are never flashed: `password*`, `_token`, `csrf_token`, `_method`
+(extend with `ValidationException::$dontFlash[] = 'card_number';`).
 
 ---
 
@@ -245,7 +327,13 @@ public function store(Request $request): Response
 }
 ```
 
-On failure the user is redirected to `/users/create` with errors and old input in session. The third argument defaults to `$_SERVER['HTTP_REFERER']` if omitted.
+On failure the user is redirected to `/users/create` with errors and old input in session. If the third argument is omitted, the `Referer` is used **only when it points to the current host**; otherwise the redirect goes to `/` (prevents open redirects).
+
+When the request expects JSON (`Accept: application/json` or `X-Requested-With: XMLHttpRequest`) the Kernel returns `422` instead of redirecting:
+
+```json
+{"message": "The given data was invalid.", "errors": {"email": ["The email field is required."]}}
+```
 
 In the view:
 
@@ -266,14 +354,67 @@ In the view:
 | Rule | Description |
 |---|---|
 | `required` | Field must be present and non-empty |
+| `sometimes` | Validate only when the field is present |
+| `nullable` | `null`/`''` accepted (other rules skipped, `''` becomes `null`) |
 | `string` | Must be a string |
 | `email` | Must be a valid email address |
+| `integer` | Integer or integer string (`"42"`, `"-3"`) |
 | `numeric` | Must be numeric |
-| `min:N` | Minimum length (string) or value (numeric) |
-| `max:N` | Maximum length (string) or value (numeric) |
-| `in:a,b,c` | Must be one of the listed values |
+| `boolean` | `true/false/1/0/"1"/"0"/"true"/"false"/"on"/"off"/"yes"/"no"`, cast to `bool` |
+| `array` | Must be an array |
+| `date` | Parseable date |
+| `after:date\|field`, `before:…` | Date after/before a date or another field |
+| `after_or_equal:…`, `before_or_equal:…` | Inclusive variants |
+| `min:N` / `max:N` | Length (string), value (numeric) or item count (array) |
+| `between:min,max` | Inclusive, same semantics as min/max |
+| `digits:N` | Exactly N digits |
+| `in:a,b,c` / `not_in:a,b` | Must (not) be one of the listed values |
+| `regex:/…/` / `not_regex:/…/` | Must (not) match — use array syntax if the pattern contains `\|` |
+| `url` | Absolute `http`/`https` URL |
 | `confirmed` | Must match `{field}_confirmation` |
+| `same:field` / `different:field` | Must equal / differ from another field |
 | `unique:table,col` | Must not already exist (requires `setUniqueChecker`) |
+
+**Unknown rules throw `InvalidArgumentException`** — a typo never silently disables validation.
+
+Except for `required`, `confirmed` and `boolean`, rules skip `null`/`''` values.
+
+**Absent fields** are still processed. A field with the `boolean` rule that is
+missing from the input (an unchecked checkbox) validates to `false` and is
+included in `validated()`; add `sometimes` to leave it out instead. Other absent
+fields are not included in `validated()`.
+
+### Custom rules
+
+```php
+use Luany\Framework\Validation\Rule;
+
+class Uppercase implements Rule
+{
+    public function passes(string $field, mixed $value, array $data): bool
+    {
+        return strtoupper($value) === $value;
+    }
+
+    public function message(string $field): string
+    {
+        return "The {$field} must be uppercase.";
+    }
+}
+
+Validator::make($data, [
+    'code' => ['required', new Uppercase()],
+    'qty'  => ['integer', fn ($field, $value, $data) => $value % 2 === 0 ?: "The {$field} must be even."],
+]);
+
+// Named rule usable in strings
+Validator::extend('slug', fn ($field, $value, $params, $data) => (bool) preg_match('/^[a-z0-9-]+$/', $value),
+    'The :field must be a slug.');
+Validator::make($data, ['handle' => 'required|slug']);
+```
+
+Closures return `true`/`null` (pass), `false` (generic message) or a string (error message).
+Custom rules are skipped for `null`/`''` values.
 
 ### unique rule with database
 
@@ -287,24 +428,45 @@ Validator::setUniqueChecker(function (string $table, string $column, mixed $valu
 
 ## 8. CSRF Protection
 
-`CsrfToken` generates and validates tokens stored in the session.
+Ecosystem convention:
+
+| | Name |
+|---|---|
+| Form field | `_token` (`CsrfToken::FIELD`) — legacy `csrf_token` also accepted |
+| Session key | `_csrf_token` (`CsrfToken::SESSION_KEY`) |
+| Header | `X-CSRF-TOKEN` (`CsrfToken::HEADER`) |
 
 ```php
 $csrf = app('csrf');
-$token = $csrf->token();    // get or generate token
-$csrf->validate($token);    // throws if invalid
+$token = $csrf->token();      // get or generate the per-session token
+$csrf->validate($token);      // bool, constant-time (hash_equals)
+$csrf->regenerate();          // new token — call on login/logout
 ```
 
-In LTE templates, use `@csrf`:
+The token is per session and is **not** rotated on every request.
+
+In forms:
 
 ```html
 <form method="POST" action="/users">
-    @csrf
+    @csrf                      {{-- or {!! csrf_field() !!} --}}
     ...
 </form>
 ```
 
-The `CsrfMiddleware` automatically validates tokens on `POST`, `PUT`, `PATCH`, `DELETE` requests. It skips validation for `GET`, `HEAD`, `OPTIONS`.
+Register `Luany\Framework\Http\Middleware\CsrfMiddleware` in the Kernel's
+`$middleware` (or as route middleware). It validates `POST`, `PUT`, `PATCH`,
+`DELETE` and skips `GET`, `HEAD`, `OPTIONS`. On mismatch it returns `403`
+(JSON `{"message": "CSRF token mismatch."}` for JSON requests); non-string
+input such as `_token[]=x` is treated as missing, never a 500.
+
+```php
+class VerifyCsrfToken extends \Luany\Framework\Http\Middleware\CsrfMiddleware
+{
+    protected array $except = ['/webhooks/*'];
+    protected int $failureStatus = 419;   // optional
+}
+```
 
 ---
 
@@ -318,9 +480,11 @@ Abort the current request with an HTTP status code:
 abort(404);
 abort(403, 'Forbidden');
 abort(422, 'Unprocessable content');
+abort(429, 'Slow down', ['Retry-After' => '60']);
 ```
 
-Throws `HttpException` which the Kernel converts to the appropriate response.
+Throws `HttpException` which the Kernel converts to the matching status. The
+message is HTML-escaped (safe with user input); JSON requests get `{"message": …}`.
 
 ### Custom handler
 
@@ -346,12 +510,19 @@ $app->singleton(\Luany\Framework\Exceptions\Handler::class, fn() => new Handler(
 ));
 ```
 
+The base `Handler::render()` keeps HTTP statuses: `HttpException` → its status,
+`RouteNotFoundException` → 404, `MethodNotAllowedException` → 405 (with `Allow`),
+`ValidationException` → 422; everything else → 500 (debug page when `debug` is on).
+`Handler::report()` logs through the container logger and skips those expected
+HTTP exceptions (`$dontReport`).
+
 ### Exception priority in Kernel
 
-1. `ValidationException` → flash is already done → redirect to `$e->getRedirectTo()`
-2. `HttpException` → `Response::make($message, $statusCode)`
-3. `RouteNotFoundException` → `Response::notFound()`
-4. Everything else → custom `Handler::render()` or `Response::serverError()`
+1. `ValidationException` → 422 JSON when the request expects JSON, else redirect to `$e->getRedirectTo()`
+2. `HttpException` → its status and headers (escaped HTML or JSON)
+3. `MethodNotAllowedException` → 405 with `Allow` header
+4. Everything else → bound `Handler` (`report()` + `render()`); without one,
+   `RouteNotFoundException` → 404 and other exceptions are logged and → 500
 
 ---
 
@@ -367,12 +538,14 @@ All helpers are in `src/Support/helpers.php` and auto-loaded via Composer.
 | `view(string $name, array $data)` | Render a view via LTE |
 | `redirect(string $url, int $status)` | Create redirect Response |
 | `response(string $body, int $status)` | Create Response |
-| `config(string $key, mixed $default)` | Get config value |
+| `config(string\|array\|null $key, mixed $default)` | Repository, value, or set values |
 | `session(?string $key, mixed $default)` | Get session or value |
 | `csrf_token()` | Get current CSRF token |
+| `csrf_field()` | Hidden `_token` input |
+| `logger(?string $message, array $context, string $level = 'debug')` | PSR-3 logger, or write a record |
 | `old(string $key, mixed $default)` | Get previous request input |
 | `validate(array $data, array $rules, string $back)` | Validate or throw |
-| `abort(int $code, string $message)` | Abort with HTTP error |
+| `abort(int $code, string $message, array $headers)` | Abort with HTTP error |
 | `__(string $key, array $replace)` | Translate a key |
 | `locale()` | Get current locale |
 
@@ -411,10 +584,44 @@ Register in `bootstrap/app.php`:
 ```php
 $app->register(new DatabaseServiceProvider());
 ```
-**Total: OK (174 tests, 223 assertions)**
 ---
 
-## 12. Changelog
+## 12. Localisation
+
+A default translator is registered by the Kernel, so `__()`, `locale()` and
+`LocaleMiddleware` work without a custom provider. Translation files live in
+`lang/{locale}.php`. Settings come from `config/app.php`, then `.env`:
+
+| config/app.php | .env | Default |
+|---|---|---|
+| `locale` | `APP_LOCALE` | `en` |
+| `fallback_locale` | `APP_FALLBACK_LOCALE` | `en` |
+| `supported_locales` | `APP_SUPPORTED_LOCALES` (comma list) | `[locale, fallback]` |
+
+`LocaleMiddleware` picks the locale from the `app_locale` cookie, then
+`Accept-Language` (languages with `q=0` are ignored), then `APP_LOCALE`.
+
+---
+
+## 13. Logging
+
+The Kernel binds a PSR-3 `Log\FileLogger` as `log` / `Psr\Log\LoggerInterface`,
+writing daily files to `storage/logs/luany-YYYY-MM-DD.log`:
+
+```php
+logger('User {id} logged in', ['id' => 7]);       // debug
+logger()->error('Payment failed', ['exception' => $e]);
+app(\Psr\Log\LoggerInterface::class)->warning('Disk almost full');
+```
+
+Optional `config/logging.php`: `path`, `channel` (`luany`), `level` (`LOG_LEVEL`,
+default `debug`), `daily` (`true`). Unhandled exceptions are logged by the Kernel
+(or by `Handler::report()` when an app handler is bound). The helper is named
+`logger()` because PHP already defines a global `log()` function.
+
+---
+
+## 14. Changelog
 
 ### next/v1 — Phase 6
 

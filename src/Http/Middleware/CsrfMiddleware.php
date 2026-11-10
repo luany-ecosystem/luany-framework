@@ -11,8 +11,21 @@ use Luany\Framework\Security\CsrfToken;
  * CsrfMiddleware
  *
  * Base middleware for CSRF protection.
- * Validates the '_token' field on state-changing requests (POST, PUT, PATCH, DELETE).
+ * Validates the token on state-changing requests (POST, PUT, PATCH, DELETE).
  * GET, HEAD, and OPTIONS requests are always allowed through.
+ *
+ * The token is read from (first non-empty string wins):
+ *   1. form field '_token'          (CsrfToken::FIELD)
+ *   2. legacy form field 'csrf_token' (CsrfToken::LEGACY_FIELD)
+ *   3. header 'X-CSRF-TOKEN'          (CsrfToken::HEADER)
+ * and compared with the session token ('_csrf_token') using hash_equals().
+ * Non-string input (e.g. _token[]=x) is treated as missing → 403, never 500.
+ *
+ * Register it globally (it is resolved through the container, so the
+ * CsrfToken dependency is injected; with no container it falls back to app('csrf')):
+ *   protected array $middleware = [
+ *       \Luany\Framework\Http\Middleware\CsrfMiddleware::class,
+ *   ];
  *
  * Applications can extend this to customize:
  *   - $except: URI patterns to exclude from CSRF checks (e.g. API webhooks)
@@ -40,17 +53,38 @@ class CsrfMiddleware implements MiddlewareInterface
      */
     protected array $except = [];
 
-    public function __construct(private CsrfToken $csrf)
+    /** HTTP status returned on token mismatch. */
+    protected int $failureStatus = 403;
+
+    public function __construct(private ?CsrfToken $csrf = null)
     {
     }
 
     public function handle(Request $request, callable $next): Response
     {
         if ($this->shouldVerify($request) && !$this->tokensMatch($request)) {
-            return Response::make('CSRF token mismatch.', 403);
+            return $request->expectsJson()
+                ? Response::json(['message' => 'CSRF token mismatch.'], $this->failureStatus)
+                : Response::make('CSRF token mismatch.', $this->failureStatus);
         }
 
         return $next($request);
+    }
+
+    /**
+     * The CsrfToken service (injected, or resolved from the container).
+     */
+    protected function csrf(): CsrfToken
+    {
+        if ($this->csrf === null) {
+            $csrf = app('csrf');
+            if (!$csrf instanceof CsrfToken) {
+                throw new \RuntimeException('Container entry [csrf] must be a ' . CsrfToken::class . ' instance.');
+            }
+            $this->csrf = $csrf;
+        }
+
+        return $this->csrf;
     }
 
     /**
@@ -103,26 +137,27 @@ class CsrfMiddleware implements MiddlewareInterface
             return false;
         }
 
-        return $this->csrf->validate($token);
+        return $this->csrf()->validate($token);
     }
 
     /**
      * Extract the CSRF token from the request.
-     * Checks POST body '_token' field, then X-CSRF-TOKEN header.
+     * Checks the '_token' field, the legacy 'csrf_token' field, then the
+     * X-CSRF-TOKEN header. Only non-empty strings are accepted.
      * Override to customize extraction.
      */
     protected function tokenFromRequest(Request $request): ?string
     {
-        // Check POST body '_token' field
-        $token = $request->input('_token');
-        if ($token !== null && $token !== '') {
-            return $token;
-        }
+        $candidates = [
+            $request->input(CsrfToken::FIELD),
+            $request->input(CsrfToken::LEGACY_FIELD),
+            $request->header(CsrfToken::HEADER),
+        ];
 
-        // Check X-CSRF-TOKEN header (AJAX requests)
-        $header = $request->header('X-CSRF-TOKEN');
-        if ($header !== null && $header !== '') {
-            return $header;
+        foreach ($candidates as $candidate) {
+            if (is_string($candidate) && $candidate !== '') {
+                return $candidate;
+            }
         }
 
         return null;

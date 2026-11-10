@@ -25,16 +25,100 @@ use Luany\Framework\Contracts\SessionInterface;
  *   $session->start();
  *   $session->get('status'); // 'Profile updated.'
  *   // After another start(), 'status' is gone.
+ *
+ * Security defaults (applied before session_start(), when headers have not
+ * been sent yet):
+ *   - cookie httponly, SameSite=Lax, secure automatically on HTTPS
+ *   - session.use_strict_mode=1 (uninitialised IDs are rejected)
+ *   - session.use_only_cookies=1, session.use_trans_sid=0
+ *
+ * All of them can be changed through the $options array (see DEFAULTS),
+ * typically from config/session.php via the Kernel.
  */
 class FileSession implements SessionInterface
 {
+    /**
+     * Default options.
+     *
+     *   name         Cookie name ('' keeps PHP's session.name)
+     *   lifetime     Cookie lifetime in seconds (0 = until browser closes)
+     *   path         Cookie path
+     *   domain       Cookie domain ('' = current host only)
+     *   secure       true/false, or null to enable automatically on HTTPS
+     *   httponly     Hide the cookie from JavaScript
+     *   samesite     'Lax' | 'Strict' | 'None'
+     *   strict_mode  session.use_strict_mode
+     *   only_cookies session.use_only_cookies (and disables trans_sid)
+     */
+    public const DEFAULTS = [
+        'name'         => '',
+        'lifetime'     => 0,
+        'path'         => '/',
+        'domain'       => '',
+        'secure'       => null,
+        'httponly'     => true,
+        'samesite'     => 'Lax',
+        'strict_mode'  => true,
+        'only_cookies' => true,
+    ];
+
     private bool $started = false;
 
+    /** @var array<string, mixed> */
+    private array $options;
+
     /**
-     * @param string $savePath Directory where session files are stored
+     * @param string               $savePath Directory where session files are stored
+     * @param array<string, mixed> $options  Cookie/security options (see DEFAULTS)
      */
-    public function __construct(private string $savePath = '')
+    public function __construct(private string $savePath = '', array $options = [])
     {
+        $this->options = array_merge(self::DEFAULTS, array_intersect_key($options, self::DEFAULTS));
+    }
+
+    /**
+     * The effective session options (defaults merged with overrides).
+     *
+     * @return array<string, mixed>
+     */
+    public function getOptions(): array
+    {
+        return $this->options;
+    }
+
+    /**
+     * Cookie parameters passed to session_set_cookie_params().
+     *
+     * @return array{lifetime: int, path: string, domain: string, secure: bool, httponly: bool, samesite: string}
+     */
+    public function cookieParams(): array
+    {
+        $secure = $this->options['secure'];
+
+        return [
+            'lifetime' => (int) $this->options['lifetime'],
+            'path'     => (string) $this->options['path'],
+            'domain'   => (string) $this->options['domain'],
+            'secure'   => $secure === null ? self::isHttps() : (bool) $secure,
+            'httponly' => (bool) $this->options['httponly'],
+            'samesite' => (string) $this->options['samesite'],
+        ];
+    }
+
+    /**
+     * Whether the current request arrived over HTTPS.
+     *
+     * Only the server's own view is trusted (HTTPS / port 443). Behind a
+     * TLS-terminating proxy, set the 'secure' option to true explicitly.
+     */
+    public static function isHttps(): bool
+    {
+        $https = $_SERVER['HTTPS'] ?? '';
+        if (is_string($https) && $https !== '' && strtolower($https) !== 'off') {
+            return true;
+        }
+
+        return (string) ($_SERVER['SERVER_PORT'] ?? '') === '443';
     }
 
     public function start(): void
@@ -53,6 +137,7 @@ class FileSession implements SessionInterface
         }
 
         if (session_status() === PHP_SESSION_NONE) {
+            $this->configure();
             session_start();
         }
 
@@ -108,10 +193,17 @@ class FileSession implements SessionInterface
         $_SESSION['_flash']['new'][$key] = $value;
     }
 
+    /**
+     * Regenerate the session ID, deleting the old session file.
+     * Call after login, logout and privilege changes (prevents fixation).
+     */
     public function regenerate(): void
     {
         $this->ensureStarted();
-        session_regenerate_id(true);
+
+        if (session_status() === PHP_SESSION_ACTIVE) {
+            session_regenerate_id(true);
+        }
     }
 
     public function save(): void
@@ -150,6 +242,31 @@ class FileSession implements SessionInterface
         }
         $_SESSION = [];
         $this->started = false;
+    }
+
+    /**
+     * Apply the security ini settings and cookie parameters.
+     * Must run before session_start(); skipped once headers are sent
+     * (PHP refuses to change them at that point).
+     */
+    private function configure(): void
+    {
+        if (headers_sent()) {
+            return;
+        }
+
+        ini_set('session.use_strict_mode', $this->options['strict_mode'] ? '1' : '0');
+        ini_set('session.use_only_cookies', $this->options['only_cookies'] ? '1' : '0');
+        if ($this->options['only_cookies']) {
+            ini_set('session.use_trans_sid', '0');
+        }
+
+        session_set_cookie_params($this->cookieParams());
+
+        $name = (string) $this->options['name'];
+        if ($name !== '') {
+            session_name($name);
+        }
     }
 
     /**

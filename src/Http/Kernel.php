@@ -2,17 +2,26 @@
 
 namespace Luany\Framework\Http;
 
+use Luany\Core\Exceptions\MethodNotAllowedException;
+use Luany\Core\Exceptions\RouteNotFoundException;
 use Luany\Core\Http\Request;
 use Luany\Core\Http\Response;
+use Luany\Core\Middleware\MiddlewareInterface;
 use Luany\Core\Middleware\Pipeline;
 use Luany\Core\Routing\Route;
 use Luany\Framework\Application;
 use Luany\Framework\Contracts\KernelInterface;
 use Luany\Framework\Contracts\SessionInterface;
+use Luany\Framework\Exceptions\Handler;
+use Luany\Framework\Exceptions\HttpException;
+use Luany\Framework\Exceptions\ValidationException;
 use Luany\Framework\Security\CsrfToken;
 use Luany\Framework\Session\FileSession;
+use Luany\Framework\Log\FileLogger;
 use Luany\Framework\Support\Config;
+use Luany\Framework\Support\Translator;
 use Luany\Lte\Engine;
+use Psr\Log\LoggerInterface;
 
 /**
  * Kernel
@@ -20,7 +29,9 @@ use Luany\Lte\Engine;
  * The HTTP request lifecycle controller.
  *
  * Responsibilities:
- *   boot()     → register LTE engine, load routes file
+ *   boot()     → register framework defaults (config, session, csrf, view,
+ *                translator, logger) unless a service provider already bound
+ *                them, wire the container resolver, load routes, boot providers
  *   handle()   → run global middleware pipeline → Route::handle()
  *   terminate()→ post-send cleanup
  *
@@ -42,7 +53,10 @@ class Kernel implements KernelInterface
      * Global middleware — applied to every request.
      * Override in your application's Kernel extension.
      *
-     * @var array<class-string>
+     * Entries are class names (resolved through the container, so constructor
+     * dependencies are injected) or MiddlewareInterface instances.
+     *
+     * @var array<int, class-string|MiddlewareInterface>
      */
     protected array $middleware = [];
 
@@ -68,6 +82,9 @@ class Kernel implements KernelInterface
         $this->registerSession();
         $this->registerCsrf();
         $this->registerLte();
+        $this->registerTranslator();
+        $this->registerLogger();
+        $this->registerResolver();
         $this->loadRoutes();
         $this->app->bootProviders();
 
@@ -87,51 +104,118 @@ class Kernel implements KernelInterface
 
             return (new Pipeline())
                 ->send($request)
-                ->through($this->middleware)
+                ->through($this->resolveMiddleware($this->middleware))
                 ->then(function (Request $req) {
                     try {
                         return Route::handle($req);
                     } catch (\Throwable $e) {
-                        return $this->handleException($e);
+                        return $this->handleException($e, $req);
                     }
                 });
         } catch (\Throwable $e) {
-            return $this->handleException($e);
+            return $this->handleException($e, $request);
         }
     }
 
-    private function handleException(\Throwable $e): Response
+    /**
+     * Convert an uncaught exception into a Response.
+     *
+     * Order:
+     *   1. ValidationException → 422 JSON {message, errors} when the request
+     *      expects JSON, otherwise a redirect (errors are already flashed).
+     *   2. HttpException (abort()) → its status/headers; escaped HTML or JSON.
+     *   3. MethodNotAllowedException → 405 with Allow header.
+     *   4. Everything else → app Handler (report + render). Without a bound
+     *      Handler: RouteNotFoundException → 404, otherwise 500.
+     */
+    protected function handleException(\Throwable $e, ?Request $request = null): Response
     {
-        // validate() throws ValidationException on failure:
-        // errors are already flashed to session — just redirect back.
-        if ($e instanceof \Luany\Framework\Exceptions\ValidationException) {
+        $wantsJson = $request !== null && $request->expectsJson();
+
+        if ($e instanceof ValidationException) {
+            if ($wantsJson) {
+                return Response::json([
+                    'message' => $e->getMessage(),
+                    'errors'  => $e->getErrors(),
+                ], 422);
+            }
             return Response::redirect($e->getRedirectTo());
         }
 
-        // abort() throws HttpException — convert directly to the matching response.
-        if ($e instanceof \Luany\Framework\Exceptions\HttpException) {
-            return Response::make($e->getMessage(), $e->getStatusCode());
+        if ($e instanceof HttpException) {
+            return $this->httpResponse($e->getStatusCode(), $e->getMessage(), $e->getHeaders(), $wantsJson);
         }
 
-        // Router throws MethodNotAllowedException when URI matches but method doesn't.
         // RFC 7231 §6.5.5 requires a 405 response with an Allow header.
-        if ($e instanceof \Luany\Core\Exceptions\MethodNotAllowedException) {
-            return Response::make('Method Not Allowed', 405)
-                ->header('Allow', $e->getAllowHeaderValue());
+        if ($e instanceof MethodNotAllowedException) {
+            return $this->httpResponse(405, 'Method Not Allowed', ['Allow' => $e->getAllowHeaderValue()], $wantsJson);
         }
 
         try {
-            $handler = $this->app->make(\Luany\Framework\Exceptions\Handler::class);
+            $handler = $this->app->make(Handler::class);
+        } catch (\Throwable) {
+            $handler = null;
+        }
+
+        if ($handler instanceof Handler) {
             try {
                 $handler->report($e);
             } catch (\Throwable) {}
-            return $handler->render($e);
-        } catch (\Throwable) {
-            if ($e instanceof \Luany\Core\Exceptions\RouteNotFoundException) {
-                return Response::notFound();
+
+            try {
+                return $handler->render($e);
+            } catch (\Throwable) {
+                // fall through to the built-in responses
             }
-            return Response::serverError();
         }
+
+        if ($e instanceof RouteNotFoundException) {
+            return $this->httpResponse(404, 'Not Found', [], $wantsJson);
+        }
+
+        if (!$handler instanceof Handler) {
+            $this->logException($e);
+        }
+
+        return $wantsJson
+            ? Response::json(['message' => 'Server Error'], 500)
+            : Response::serverError();
+    }
+
+    /**
+     * Log an unhandled exception through the bound PSR-3 logger.
+     * Never throws — falls back to error_log().
+     */
+    protected function logException(\Throwable $e): void
+    {
+        try {
+            $logger = $this->app->make('log');
+            if ($logger instanceof LoggerInterface) {
+                $logger->error(sprintf('Unhandled %s: %s', get_class($e), $e->getMessage()), ['exception' => $e]);
+                return;
+            }
+        } catch (\Throwable) {
+        }
+
+        error_log(sprintf('[%s] %s in %s on line %d', get_class($e), $e->getMessage(), $e->getFile(), $e->getLine()));
+    }
+
+    /**
+     * Build a plain HTTP error response. The message is HTML-escaped.
+     *
+     * @param array<string, string> $headers
+     */
+    private function httpResponse(int $status, string $message, array $headers, bool $json): Response
+    {
+        if ($json) {
+            return Response::json(['message' => $message], $status, $headers);
+        }
+
+        return Response::make(
+            htmlspecialchars($message, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'),
+            $status,
+            ['Content-Type' => 'text/html; charset=UTF-8'] + $headers
+        );
     }
 
     public function terminate(Request $request, Response $response): void
@@ -142,59 +226,243 @@ class Kernel implements KernelInterface
 
     // ── Private ───────────────────────────────────────────────────────────────────────
 
+    /**
+     * Resolve a class through the container (autowiring constructor dependencies).
+     * Used as the luany/core resolver for controllers and middleware.
+     */
+    public function resolveClass(string $class): object
+    {
+        $object = $this->app->make($class);
+
+        if (!is_object($object)) {
+            throw new \RuntimeException("Container entry [{$class}] did not resolve to an object.");
+        }
+
+        return $object;
+    }
+
+    /**
+     * Register the container as luany/core's class resolver so controllers and
+     * class-name middleware get their constructor dependencies injected.
+     *
+     * The hook exists from luany/core 1.1; on 1.0 this is a no-op (global
+     * middleware is still resolved through the container by the Kernel).
+     */
+    private function registerResolver(): void
+    {
+        $resolver = fn (string $class): object => $this->resolveClass($class);
+
+        // Guarded so the framework stays installable with luany/core 1.0.
+        self::callIfExists(Pipeline::class, 'setDefaultResolver', $resolver);
+        self::callIfExists(Route::router(), 'setResolver', $resolver);
+    }
+
+    /**
+     * Call $target->$method(...$args) only when the method exists
+     * (optional hooks added in newer luany/core releases).
+     */
+    private static function callIfExists(object|string $target, string $method, mixed ...$args): void
+    {
+        if (!method_exists($target, $method)) {
+            return;
+        }
+
+        $callable = [$target, $method];
+        if (is_callable($callable)) {
+            $callable(...$args);
+        }
+    }
+
+    /**
+     * Instantiate global middleware through the container, so constructor
+     * injection works regardless of the installed luany/core version.
+     *
+     * @param  array<int, class-string|MiddlewareInterface> $middleware
+     * @return array<int, MiddlewareInterface>
+     */
+    private function resolveMiddleware(array $middleware): array
+    {
+        $resolved = [];
+
+        foreach ($middleware as $entry) {
+            $instance = is_string($entry) ? $this->resolveClass($entry) : $entry;
+
+            if (!$instance instanceof MiddlewareInterface) {
+                $name = is_string($entry) ? $entry : get_debug_type($entry);
+                throw new \RuntimeException("Middleware [{$name}] must implement MiddlewareInterface");
+            }
+
+            $resolved[] = $instance;
+        }
+
+        return $resolved;
+    }
+
+    /**
+     * Register a framework default under a container key and a class alias.
+     *
+     * Bindings made by service providers (which register before the Kernel
+     * boots) always win:
+     *   - neither bound   → $key gets the default, $class aliases $key
+     *   - only $key bound → $class aliases the provider's $key
+     *   - only $class bound → $key aliases the provider's $class
+     *   - both bound      → nothing is touched
+     *
+     * @param callable(Application): mixed $factory
+     */
+    protected function registerDefault(string $key, ?string $class, callable $factory): void
+    {
+        $app      = $this->app;
+        $keyBound = $app->bound($key);
+
+        if ($class === null) {
+            if (!$keyBound) {
+                $app->singleton($key, $factory);
+            }
+            return;
+        }
+
+        $classBound = $app->bound($class);
+
+        if (!$keyBound) {
+            $app->singleton($key, $classBound ? fn (Application $app) => $app->make($class) : $factory);
+        }
+
+        if (!$classBound) {
+            $app->singleton($class, fn (Application $app) => $app->make($key));
+        }
+    }
+
     private function registerConfig(): void
     {
-        $app = $this->app;
-
-        $app->singleton('config', function () use ($app) {
+        $this->registerDefault('config', Config::class, function (Application $app) {
             return new Config($app->configPath());
         });
     }
 
     private function registerSession(): void
     {
-        $app = $this->app;
+        $this->registerDefault('session', SessionInterface::class, function (Application $app) {
+            // Optional config/session.php — keys: save_path, name, lifetime (seconds),
+            // path, domain, secure (null = auto on HTTPS), httponly, samesite,
+            // strict_mode, only_cookies. See FileSession::DEFAULTS.
+            $config  = $app->make('config');
+            $options = $config instanceof Config ? $config->get('session', []) : [];
+            $options = is_array($options) ? $options : [];
 
-        $app->singleton('session', function () use ($app) {
-            $savePath = $app->storagePath('sessions');
-            $session = new FileSession($savePath);
+            $savePath = $options['save_path'] ?? $app->storagePath('sessions');
+
+            $session = new FileSession(is_string($savePath) ? $savePath : $app->storagePath('sessions'), $options);
             $session->start();
             return $session;
-        });
-
-        $app->singleton(SessionInterface::class, function () use ($app) {
-            return $app->make('session');
         });
     }
 
     private function registerCsrf(): void
     {
-        $app = $this->app;
-
-        $app->singleton('csrf', function () use ($app) {
+        $this->registerDefault('csrf', CsrfToken::class, function (Application $app) {
             return new CsrfToken($app->make('session'));
-        });
-
-        $app->singleton(CsrfToken::class, function () use ($app) {
-            return $app->make('csrf');
         });
     }
 
     private function registerLte(): void
     {
-        $app = $this->app;
-
-        $app->singleton('view', function () use ($app) {
+        $this->registerDefault('view', Engine::class, function () {
             return new Engine(
-                viewsPath:  $app->viewsPath(),
-                cachePath:  $app->cachePath('views'),
+                viewsPath:  $this->app->viewsPath(),
+                cachePath:  $this->app->cachePath('views'),
                 autoReload: (bool) env('APP_DEBUG', false),
             );
         });
 
-        // Connect LTE engine to Route::view()
+        $this->configureLteRuntime();
+
+        // Connect the bound view engine to Route::view()
         Route::setViewRenderer(function (string $name, array $data) {
             return app('view')->render($name, $data);
+        });
+    }
+
+    /**
+     * Whether the application runs in debug mode: config('app.debug'),
+     * falling back to APP_DEBUG.
+     */
+    protected function isDebug(): bool
+    {
+        try {
+            $config = $this->app->make('config');
+            if ($config instanceof Config && $config->has('app.debug')) {
+                return (bool) $config->get('app.debug');
+            }
+        } catch (\Throwable) {
+        }
+
+        return (bool) env('APP_DEBUG', false);
+    }
+
+    /**
+     * Tell luany/lte's runtime whether debug directives (@dump/@dd) are active.
+     * Luany\Lte\Runtime exists from luany/lte 1.1; on 1.0 this is a no-op.
+     */
+    private function configureLteRuntime(): void
+    {
+        if (class_exists(\Luany\Lte\Runtime::class)) {
+            \Luany\Lte\Runtime::setDebug($this->isDebug());
+        }
+    }
+
+    /**
+     * Default translator — lang/{locale}.php files.
+     *
+     * Settings (config/app.php first, then .env):
+     *   locale            app.locale            | APP_LOCALE            (default 'en')
+     *   fallback_locale   app.fallback_locale   | APP_FALLBACK_LOCALE   (default 'en')
+     *   supported_locales app.supported_locales | APP_SUPPORTED_LOCALES (comma list,
+     *                                              default [locale, fallback])
+     */
+    private function registerTranslator(): void
+    {
+        $this->registerDefault('translator', Translator::class, function (Application $app) {
+            $config = $app->make('config');
+            $get = fn (string $key, mixed $default) => $config instanceof Config ? $config->get($key, $default) : $default;
+
+            $locale   = (string) $get('app.locale', env('APP_LOCALE', 'en'));
+            $fallback = (string) $get('app.fallback_locale', env('APP_FALLBACK_LOCALE', 'en'));
+
+            $supported = $get('app.supported_locales', env('APP_SUPPORTED_LOCALES'));
+            if (is_string($supported)) {
+                $supported = array_map('trim', explode(',', $supported));
+            }
+            if (!is_array($supported) || $supported === []) {
+                $supported = [$locale, $fallback];
+            }
+            $supported = array_values(array_unique(array_filter(array_map('strval', $supported), fn ($l) => $l !== '')));
+
+            return new Translator($app->langPath(), $locale, $fallback, $supported);
+        });
+    }
+
+    /**
+     * Default PSR-3 logger — daily files in storage/logs.
+     *
+     * Settings (config/logging.php first, then .env):
+     *   path    logging.path    (default storage/logs)
+     *   channel logging.channel (default 'luany')
+     *   level   logging.level   | LOG_LEVEL (default 'debug')
+     *   daily   logging.daily   (default true)
+     */
+    private function registerLogger(): void
+    {
+        $this->registerDefault('log', LoggerInterface::class, function (Application $app) {
+            $config = $app->make('config');
+            $get = fn (string $key, mixed $default) => $config instanceof Config ? $config->get($key, $default) : $default;
+
+            return new FileLogger(
+                (string) $get('logging.path', $app->storagePath('logs')),
+                (string) $get('logging.channel', 'luany'),
+                strtolower((string) $get('logging.level', env('LOG_LEVEL', 'debug'))),
+                (bool) $get('logging.daily', true),
+            );
         });
     }
 

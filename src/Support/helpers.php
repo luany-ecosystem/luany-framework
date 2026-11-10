@@ -133,16 +133,33 @@ if (!function_exists('locale')) {
 
 if (!function_exists('config')) {
     /**
-     * Get a configuration value using dot-notation.
+     * Get the configuration repository, get a value, or set values.
      *
      * Usage:
-     *   config('app.name')              // value
-     *   config('app.missing', 'default') // fallback
+     *   config()                          // Config repository instance
+     *   config()->set('app.debug', true)  // runtime override
+     *   config('app.name')                // value
+     *   config('app.missing', 'default')  // fallback
+     *   config(['app.debug' => true])     // set one or more values
+     *
+     * @param string|array<string, mixed>|null $key
      */
-    function config(string $key, mixed $default = null): mixed
+    function config(string|array|null $key = null, mixed $default = null): mixed
     {
         /** @var \Luany\Framework\Support\Config $config */
         $config = app('config');
+
+        if ($key === null) {
+            return $config;
+        }
+
+        if (is_array($key)) {
+            foreach ($key as $name => $value) {
+                $config->set((string) $name, $value);
+            }
+            return null;
+        }
+
         return $config->get($key, $default);
     }
 }
@@ -184,6 +201,20 @@ if (!function_exists('csrf_token')) {
     }
 }
 
+if (!function_exists('csrf_field')) {
+    /**
+     * Hidden form input carrying the CSRF token.
+     *
+     * Usage:
+     *   <form method="POST">{!! csrf_field() !!} ...</form>
+     */
+    function csrf_field(): string
+    {
+        return '<input type="hidden" name="' . \Luany\Framework\Security\CsrfToken::FIELD . '" value="'
+            . htmlspecialchars(csrf_token(), ENT_QUOTES, 'UTF-8') . '">';
+    }
+}
+
 if (!function_exists('old')) {
     /**
      * Get flashed old input from the previous request.
@@ -208,7 +239,14 @@ if (!function_exists('validate')) {
      *
      * On success — returns the validated data array (only validated fields).
      * On failure — flashes errors + old input to session, then throws
-     *              ValidationException which the Kernel converts to a redirect.
+     *              ValidationException which the Kernel converts to a redirect
+     *              (or a 422 JSON response when the request expects JSON).
+     *
+     * Old input never contains password*, _token, csrf_token or _method
+     * (see ValidationException::$dontFlash).
+     *
+     * Without $redirectTo the Referer is used only when it points to the
+     * current host; otherwise the redirect goes to '/'.
      *
      * Usage:
      *   $data = validate($request->body(), [
@@ -220,9 +258,9 @@ if (!function_exists('validate')) {
      *   User::create($data);
      *
      * @param  array<string, mixed>  $data       Data to validate (e.g. $request->body())
-     * @param  array<string, string> $rules       Validation rules per field
+     * @param  array<string, mixed>  $rules       Validation rules per field
      * @param  string                $redirectTo  URL to redirect back to on failure.
-     *                                            Defaults to HTTP_REFERER or '/'.
+     *                                            Defaults to a same-host HTTP_REFERER or '/'.
      * @return array<string, mixed>  Validated data
      * @throws \Luany\Framework\Exceptions\ValidationException on failure
      */
@@ -237,9 +275,14 @@ if (!function_exists('validate')) {
         /** @var \Luany\Framework\Contracts\SessionInterface $session */
         $session = app('session');
         $session->flash('errors', $v->errors());
-        $session->flash('_old_input', $data);
+        $session->flash('_old_input', \Luany\Framework\Exceptions\ValidationException::filterOldInput($data));
 
-        $url = $redirectTo !== '' ? $redirectTo : ($_SERVER['HTTP_REFERER'] ?? '/');
+        $url = $redirectTo !== ''
+            ? $redirectTo
+            : \Luany\Framework\Support\Url::sameHostOrFallback(
+                is_string($_SERVER['HTTP_REFERER'] ?? null) ? $_SERVER['HTTP_REFERER'] : null,
+                is_string($_SERVER['HTTP_HOST'] ?? null) ? $_SERVER['HTTP_HOST'] : null,
+            );
 
         throw new \Luany\Framework\Exceptions\ValidationException($v->errors(), $url);
     }
@@ -256,11 +299,48 @@ if (!function_exists('abort')) {
      *   abort(404);
      *   abort(403, 'Forbidden');
      *   abort(422, 'Unprocessable content');
+     *   abort(429, 'Slow down', ['Retry-After' => '60']);
      *
+     * The message is HTML-escaped when rendered, so it is safe to include
+     * user input.
+     *
+     * @param array<string, string> $headers
      * @throws \Luany\Framework\Exceptions\HttpException
      */
-    function abort(int $code, string $message = ''): never
+    function abort(int $code, string $message = '', array $headers = []): never
     {
-        throw new \Luany\Framework\Exceptions\HttpException($code, $message);
+        throw new \Luany\Framework\Exceptions\HttpException($code, $message, null, $headers);
+    }
+}
+
+if (!function_exists('logger')) {
+    /**
+     * Get the PSR-3 logger, or write a log record.
+     *
+     * (Named logger() because PHP already defines a built-in log() function.)
+     *
+     * Usage:
+     *   logger()                                   // Psr\Log\LoggerInterface
+     *   logger()->error('Payment failed', ['id' => 7]);
+     *   logger('User {id} logged in', ['id' => 7]);           // level: debug
+     *   logger('Disk almost full', [], 'warning');
+     *
+     * @param array<string, mixed> $context
+     */
+    function logger(string|\Stringable|null $message = null, array $context = [], string $level = 'debug'): ?\Psr\Log\LoggerInterface
+    {
+        $logger = app('log');
+
+        if (!$logger instanceof \Psr\Log\LoggerInterface) {
+            throw new \RuntimeException('Container entry [log] must implement Psr\Log\LoggerInterface.');
+        }
+
+        if ($message === null) {
+            return $logger;
+        }
+
+        $logger->log($level, $message, $context);
+
+        return null;
     }
 }

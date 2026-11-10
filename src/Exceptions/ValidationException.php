@@ -30,6 +30,41 @@ namespace Luany\Framework\Exceptions;
 class ValidationException extends \RuntimeException
 {
     /**
+     * Input keys never flashed as old input by validate().
+     * A trailing '*' matches any key with that prefix (case-insensitive),
+     * so 'password*' covers password, password_confirmation, password_new...
+     *
+     * Applications may extend this list:
+     *   ValidationException::$dontFlash[] = 'credit_card';
+     *
+     * @var array<int, string>
+     */
+    public static array $dontFlash = ['password*', '_token', 'csrf_token', '_method'];
+
+    /**
+     * Remove sensitive keys (see $dontFlash) from input before flashing it.
+     *
+     * @param  array<string, mixed> $input
+     * @return array<string, mixed>
+     */
+    public static function filterOldInput(array $input): array
+    {
+        return array_filter($input, static function ($key): bool {
+            $key = strtolower((string) $key);
+            foreach (static::$dontFlash as $pattern) {
+                $pattern = strtolower($pattern);
+                if (str_ends_with($pattern, '*')
+                    ? str_starts_with($key, substr($pattern, 0, -1))
+                    : $key === $pattern
+                ) {
+                    return false;
+                }
+            }
+            return true;
+        }, ARRAY_FILTER_USE_KEY);
+    }
+
+    /**
      * @param array<string, array<string>> $errors    Validation errors per field
      * @param string                       $redirectTo URL to redirect back to on failure
      */

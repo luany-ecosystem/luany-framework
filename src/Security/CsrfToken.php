@@ -8,12 +8,20 @@ use Luany\Framework\Contracts\SessionInterface;
  * CsrfToken
  *
  * Generates and validates CSRF tokens using the session.
- * Tokens are stored in the session under the '_csrf_token' key.
+ *
+ * Ecosystem convention:
+ *   form field  '_token'        (CsrfToken::FIELD; legacy 'csrf_token' accepted)
+ *   session key '_csrf_token'   (CsrfToken::SESSION_KEY)
+ *   header      'X-CSRF-TOKEN'  (CsrfToken::HEADER)
+ *
+ * The token is per session — it is NOT rotated on every request (that breaks
+ * multiple tabs and back-button navigation). Call regenerate() on login and
+ * logout, together with session()->regenerate().
  *
  * Usage:
  *   $csrf = new CsrfToken($session);
  *   $token = $csrf->token();          // get or generate token
- *   $csrf->validate($submitted);      // true/false
+ *   $csrf->validate($submitted);      // true/false (constant-time)
  *   $csrf->regenerate();              // force new token
  *
  * In forms:
@@ -21,7 +29,10 @@ use Luany\Framework\Contracts\SessionInterface;
  */
 class CsrfToken
 {
-    private const SESSION_KEY = '_csrf_token';
+    public const SESSION_KEY  = '_csrf_token';
+    public const FIELD        = '_token';
+    public const LEGACY_FIELD = 'csrf_token';
+    public const HEADER       = 'X-CSRF-TOKEN';
 
     public function __construct(private SessionInterface $session)
     {
@@ -34,7 +45,7 @@ class CsrfToken
     {
         $token = $this->session->get(self::SESSION_KEY);
 
-        if ($token === null) {
+        if (!is_string($token) || $token === '') {
             $token = $this->regenerate();
         }
 
@@ -42,13 +53,13 @@ class CsrfToken
     }
 
     /**
-     * Validate a submitted token against the stored token.
+     * Validate a submitted token against the stored token (constant-time).
      */
     public function validate(string $token): bool
     {
         $stored = $this->session->get(self::SESSION_KEY);
 
-        if ($stored === null || $token === '') {
+        if (!is_string($stored) || $stored === '' || $token === '') {
             return false;
         }
 
