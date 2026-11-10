@@ -18,6 +18,7 @@ use Luany\Framework\Exceptions\ValidationException;
 use Luany\Framework\Security\CsrfToken;
 use Luany\Framework\Session\FileSession;
 use Luany\Framework\Support\Config;
+use Luany\Framework\Support\Translator;
 use Luany\Lte\Engine;
 
 /**
@@ -79,6 +80,7 @@ class Kernel implements KernelInterface
         $this->registerSession();
         $this->registerCsrf();
         $this->registerLte();
+        $this->registerTranslator();
         $this->registerResolver();
         $this->loadRoutes();
         $this->app->bootProviders();
@@ -343,6 +345,37 @@ class Kernel implements KernelInterface
         // Connect the bound view engine to Route::view()
         Route::setViewRenderer(function (string $name, array $data) {
             return app('view')->render($name, $data);
+        });
+    }
+
+    /**
+     * Default translator — lang/{locale}.php files.
+     *
+     * Settings (config/app.php first, then .env):
+     *   locale            app.locale            | APP_LOCALE            (default 'en')
+     *   fallback_locale   app.fallback_locale   | APP_FALLBACK_LOCALE   (default 'en')
+     *   supported_locales app.supported_locales | APP_SUPPORTED_LOCALES (comma list,
+     *                                              default [locale, fallback])
+     */
+    private function registerTranslator(): void
+    {
+        $this->registerDefault('translator', Translator::class, function (Application $app) {
+            $config = $app->make('config');
+            $get = fn (string $key, mixed $default) => $config instanceof Config ? $config->get($key, $default) : $default;
+
+            $locale   = (string) $get('app.locale', env('APP_LOCALE', 'en'));
+            $fallback = (string) $get('app.fallback_locale', env('APP_FALLBACK_LOCALE', 'en'));
+
+            $supported = $get('app.supported_locales', env('APP_SUPPORTED_LOCALES'));
+            if (is_string($supported)) {
+                $supported = array_map('trim', explode(',', $supported));
+            }
+            if (!is_array($supported) || $supported === []) {
+                $supported = [$locale, $fallback];
+            }
+            $supported = array_values(array_unique(array_filter(array_map('strval', $supported), fn ($l) => $l !== '')));
+
+            return new Translator($app->langPath(), $locale, $fallback, $supported);
         });
     }
 

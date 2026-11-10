@@ -304,6 +304,11 @@ class Application implements ApplicationInterface, ContainerInterface
         return $this->storagePath('cache') . ($path ? DIRECTORY_SEPARATOR . ltrim($path, '/\\') : '');
     }
 
+    public function langPath(string $path = ''): string
+    {
+        return $this->basePath('lang') . ($path ? DIRECTORY_SEPARATOR . ltrim($path, '/\\') : '');
+    }
+
     public function routesPath(string $path = ''): string
     {
         return $this->basePath('routes') . ($path ? DIRECTORY_SEPARATOR . ltrim($path, '/\\') : '');

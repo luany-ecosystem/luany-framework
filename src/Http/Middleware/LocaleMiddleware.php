@@ -68,27 +68,45 @@ class LocaleMiddleware implements MiddlewareInterface
     /**
      * Parse Accept-Language header and return the best supported locale.
      * Handles: 'pt-PT,pt;q=0.9,en;q=0.8' → 'pt'
+     * Languages with q=0 are "not acceptable" (RFC 9110 §12.4.2) and ignored.
+     *
+     * @param array<int, string> $supported
      */
-    /** @param array<int, string> $supported */
     private function parseAcceptLanguage(string $header, array $supported): ?string
     {
-        $parts  = explode(',', $header);
         $parsed = [];
+        $order  = 0;
 
-        foreach ($parts as $part) {
-            $segments = explode(';q=', trim($part));
-            $tag      = trim($segments[0]);
-            $quality  = isset($segments[1]) ? (float) $segments[1] : 1.0;
+        foreach (explode(',', $header) as $part) {
+            $segments = array_map('trim', explode(';', $part));
+            $tag      = array_shift($segments);
+            $quality  = 1.0;
+
+            foreach ($segments as $param) {
+                if (preg_match('/^q\s*=\s*([0-9.]+)$/i', $param, $m)) {
+                    $quality = (float) $m[1];
+                } elseif (stripos($param, 'q') === 0) {
+                    $quality = 0.0; // malformed q-value — treat as not acceptable
+                }
+            }
+
+            if ($tag === '' || $tag === null || $quality <= 0.0) {
+                continue;
+            }
 
             $lang = strtolower(explode('-', $tag)[0]);
-            $parsed[$lang] = max($parsed[$lang] ?? 0, $quality);
+
+            if (!isset($parsed[$lang]) || $quality > $parsed[$lang]['q']) {
+                $parsed[$lang] = ['q' => min($quality, 1.0), 'order' => $parsed[$lang]['order'] ?? $order++];
+            }
         }
 
-        arsort($parsed);
+        // Highest quality first; ties keep header order.
+        uasort($parsed, fn ($a, $b) => [$b['q'], $a['order']] <=> [$a['q'], $b['order']]);
 
         foreach (array_keys($parsed) as $lang) {
-            if (in_array($lang, $supported, true)) {
-                return $lang;
+            if (in_array((string) $lang, $supported, true)) {
+                return (string) $lang;
             }
         }
 
