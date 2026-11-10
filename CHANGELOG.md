@@ -6,7 +6,7 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
-## [Unreleased]
+## [1.1.1] — 2026-11-10
 
 ### Fixed
 - `abort()` / `HttpException` and 405 responses now go through the application `Handler`, so custom error pages apply to them as they already did to unmatched routes. JSON clients keep the Kernel's `{message}` response; without a bound Handler the built-in responses are unchanged. HTTP exceptions are still not reported (`Handler::$dontReport`). (#13)
