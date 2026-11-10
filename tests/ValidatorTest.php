@@ -403,10 +403,12 @@ class ValidatorTest extends TestCase
         $this->assertEmpty($v->validated());
     }
 
-    public function testUnknownRuleIsIgnored(): void
+    public function testUnknownRuleThrows(): void
     {
-        $v = Validator::make(['name' => 'test'], ['name' => 'required|unknown_rule']);
-        $this->assertTrue($v->passes());
+        // Issue #5: a typo must never silently disable a rule.
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('unknown_rule');
+        Validator::make(['name' => 'test'], ['name' => 'required|unknown_rule']);
     }
 
     public function testMultibyteStringMinMax(): void
