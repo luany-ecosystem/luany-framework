@@ -308,7 +308,16 @@ class Kernel implements KernelInterface
     private function registerSession(): void
     {
         $this->registerDefault('session', SessionInterface::class, function (Application $app) {
-            $session = new FileSession($app->storagePath('sessions'));
+            // Optional config/session.php — keys: save_path, name, lifetime (seconds),
+            // path, domain, secure (null = auto on HTTPS), httponly, samesite,
+            // strict_mode, only_cookies. See FileSession::DEFAULTS.
+            $config  = $app->make('config');
+            $options = $config instanceof Config ? $config->get('session', []) : [];
+            $options = is_array($options) ? $options : [];
+
+            $savePath = $options['save_path'] ?? $app->storagePath('sessions');
+
+            $session = new FileSession(is_string($savePath) ? $savePath : $app->storagePath('sessions'), $options);
             $session->start();
             return $session;
         });
