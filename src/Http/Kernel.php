@@ -375,10 +375,40 @@ class Kernel implements KernelInterface
             );
         });
 
+        $this->configureLteRuntime();
+
         // Connect the bound view engine to Route::view()
         Route::setViewRenderer(function (string $name, array $data) {
             return app('view')->render($name, $data);
         });
+    }
+
+    /**
+     * Whether the application runs in debug mode: config('app.debug'),
+     * falling back to APP_DEBUG.
+     */
+    protected function isDebug(): bool
+    {
+        try {
+            $config = $this->app->make('config');
+            if ($config instanceof Config && $config->has('app.debug')) {
+                return (bool) $config->get('app.debug');
+            }
+        } catch (\Throwable) {
+        }
+
+        return (bool) env('APP_DEBUG', false);
+    }
+
+    /**
+     * Tell luany/lte's runtime whether debug directives (@dump/@dd) are active.
+     * Luany\Lte\Runtime exists from luany/lte 1.1; on 1.0 this is a no-op.
+     */
+    private function configureLteRuntime(): void
+    {
+        if (class_exists(\Luany\Lte\Runtime::class)) {
+            \Luany\Lte\Runtime::setDebug($this->isDebug());
+        }
     }
 
     /**
