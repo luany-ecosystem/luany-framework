@@ -253,15 +253,23 @@ class Kernel implements KernelInterface
         $resolver = fn (string $class): object => $this->resolveClass($class);
 
         // Guarded so the framework stays installable with luany/core 1.0.
-        $setDefault = [Pipeline::class, 'setDefaultResolver'];
-        if (method_exists(Pipeline::class, 'setDefaultResolver') && is_callable($setDefault)) {
-            $setDefault($resolver);
+        self::callIfExists(Pipeline::class, 'setDefaultResolver', $resolver);
+        self::callIfExists(Route::router(), 'setResolver', $resolver);
+    }
+
+    /**
+     * Call $target->$method(...$args) only when the method exists
+     * (optional hooks added in newer luany/core releases).
+     */
+    private static function callIfExists(object|string $target, string $method, mixed ...$args): void
+    {
+        if (!method_exists($target, $method)) {
+            return;
         }
 
-        $router    = Route::router();
-        $setRouter = [$router, 'setResolver'];
-        if (method_exists($router, 'setResolver') && is_callable($setRouter)) {
-            $setRouter($resolver);
+        $callable = [$target, $method];
+        if (is_callable($callable)) {
+            $callable(...$args);
         }
     }
 
