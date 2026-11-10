@@ -133,16 +133,33 @@ if (!function_exists('locale')) {
 
 if (!function_exists('config')) {
     /**
-     * Get a configuration value using dot-notation.
+     * Get the configuration repository, get a value, or set values.
      *
      * Usage:
-     *   config('app.name')              // value
-     *   config('app.missing', 'default') // fallback
+     *   config()                          // Config repository instance
+     *   config()->set('app.debug', true)  // runtime override
+     *   config('app.name')                // value
+     *   config('app.missing', 'default')  // fallback
+     *   config(['app.debug' => true])     // set one or more values
+     *
+     * @param string|array<string, mixed>|null $key
      */
-    function config(string $key, mixed $default = null): mixed
+    function config(string|array|null $key = null, mixed $default = null): mixed
     {
         /** @var \Luany\Framework\Support\Config $config */
         $config = app('config');
+
+        if ($key === null) {
+            return $config;
+        }
+
+        if (is_array($key)) {
+            foreach ($key as $name => $value) {
+                $config->set((string) $name, $value);
+            }
+            return null;
+        }
+
         return $config->get($key, $default);
     }
 }
