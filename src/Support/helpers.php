@@ -312,3 +312,35 @@ if (!function_exists('abort')) {
         throw new \Luany\Framework\Exceptions\HttpException($code, $message, null, $headers);
     }
 }
+
+if (!function_exists('logger')) {
+    /**
+     * Get the PSR-3 logger, or write a log record.
+     *
+     * (Named logger() because PHP already defines a built-in log() function.)
+     *
+     * Usage:
+     *   logger()                                   // Psr\Log\LoggerInterface
+     *   logger()->error('Payment failed', ['id' => 7]);
+     *   logger('User {id} logged in', ['id' => 7]);           // level: debug
+     *   logger('Disk almost full', [], 'warning');
+     *
+     * @param array<string, mixed> $context
+     */
+    function logger(string|\Stringable|null $message = null, array $context = [], string $level = 'debug'): ?\Psr\Log\LoggerInterface
+    {
+        $logger = app('log');
+
+        if (!$logger instanceof \Psr\Log\LoggerInterface) {
+            throw new \RuntimeException('Container entry [log] must implement Psr\Log\LoggerInterface.');
+        }
+
+        if ($message === null) {
+            return $logger;
+        }
+
+        $logger->log($level, $message, $context);
+
+        return null;
+    }
+}

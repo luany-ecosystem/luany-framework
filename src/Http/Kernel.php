@@ -17,9 +17,11 @@ use Luany\Framework\Exceptions\HttpException;
 use Luany\Framework\Exceptions\ValidationException;
 use Luany\Framework\Security\CsrfToken;
 use Luany\Framework\Session\FileSession;
+use Luany\Framework\Log\FileLogger;
 use Luany\Framework\Support\Config;
 use Luany\Framework\Support\Translator;
 use Luany\Lte\Engine;
+use Psr\Log\LoggerInterface;
 
 /**
  * Kernel
@@ -81,6 +83,7 @@ class Kernel implements KernelInterface
         $this->registerCsrf();
         $this->registerLte();
         $this->registerTranslator();
+        $this->registerLogger();
         $this->registerResolver();
         $this->loadRoutes();
         $this->app->bootProviders();
@@ -170,9 +173,31 @@ class Kernel implements KernelInterface
             return $this->httpResponse(404, 'Not Found', [], $wantsJson);
         }
 
+        if (!$handler instanceof Handler) {
+            $this->logException($e);
+        }
+
         return $wantsJson
             ? Response::json(['message' => 'Server Error'], 500)
             : Response::serverError();
+    }
+
+    /**
+     * Log an unhandled exception through the bound PSR-3 logger.
+     * Never throws — falls back to error_log().
+     */
+    protected function logException(\Throwable $e): void
+    {
+        try {
+            $logger = $this->app->make('log');
+            if ($logger instanceof LoggerInterface) {
+                $logger->error(sprintf('Unhandled %s: %s', get_class($e), $e->getMessage()), ['exception' => $e]);
+                return;
+            }
+        } catch (\Throwable) {
+        }
+
+        error_log(sprintf('[%s] %s in %s on line %d', get_class($e), $e->getMessage(), $e->getFile(), $e->getLine()));
     }
 
     /**
@@ -376,6 +401,30 @@ class Kernel implements KernelInterface
             $supported = array_values(array_unique(array_filter(array_map('strval', $supported), fn ($l) => $l !== '')));
 
             return new Translator($app->langPath(), $locale, $fallback, $supported);
+        });
+    }
+
+    /**
+     * Default PSR-3 logger — daily files in storage/logs.
+     *
+     * Settings (config/logging.php first, then .env):
+     *   path    logging.path    (default storage/logs)
+     *   channel logging.channel (default 'luany')
+     *   level   logging.level   | LOG_LEVEL (default 'debug')
+     *   daily   logging.daily   (default true)
+     */
+    private function registerLogger(): void
+    {
+        $this->registerDefault('log', LoggerInterface::class, function (Application $app) {
+            $config = $app->make('config');
+            $get = fn (string $key, mixed $default) => $config instanceof Config ? $config->get($key, $default) : $default;
+
+            return new FileLogger(
+                (string) $get('logging.path', $app->storagePath('logs')),
+                (string) $get('logging.channel', 'luany'),
+                strtolower((string) $get('logging.level', env('LOG_LEVEL', 'debug'))),
+                (bool) $get('logging.daily', true),
+            );
         });
     }
 
