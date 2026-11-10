@@ -21,7 +21,9 @@ use Luany\Lte\Engine;
  * The HTTP request lifecycle controller.
  *
  * Responsibilities:
- *   boot()     → register LTE engine, load routes file
+ *   boot()     → register framework defaults (config, session, csrf, view,
+ *                translator, logger) unless a service provider already bound
+ *                them, wire the container resolver, load routes, boot providers
  *   handle()   → run global middleware pipeline → Route::handle()
  *   terminate()→ post-send cleanup
  *
@@ -211,57 +213,75 @@ class Kernel implements KernelInterface
         return $resolved;
     }
 
+    /**
+     * Register a framework default under a container key and a class alias.
+     *
+     * Bindings made by service providers (which register before the Kernel
+     * boots) always win:
+     *   - neither bound   → $key gets the default, $class aliases $key
+     *   - only $key bound → $class aliases the provider's $key
+     *   - only $class bound → $key aliases the provider's $class
+     *   - both bound      → nothing is touched
+     *
+     * @param callable(Application): mixed $factory
+     */
+    protected function registerDefault(string $key, ?string $class, callable $factory): void
+    {
+        $app      = $this->app;
+        $keyBound = $app->bound($key);
+
+        if ($class === null) {
+            if (!$keyBound) {
+                $app->singleton($key, $factory);
+            }
+            return;
+        }
+
+        $classBound = $app->bound($class);
+
+        if (!$keyBound) {
+            $app->singleton($key, $classBound ? fn (Application $app) => $app->make($class) : $factory);
+        }
+
+        if (!$classBound) {
+            $app->singleton($class, fn (Application $app) => $app->make($key));
+        }
+    }
+
     private function registerConfig(): void
     {
-        $app = $this->app;
-
-        $app->singleton('config', function () use ($app) {
+        $this->registerDefault('config', Config::class, function (Application $app) {
             return new Config($app->configPath());
         });
     }
 
     private function registerSession(): void
     {
-        $app = $this->app;
-
-        $app->singleton('session', function () use ($app) {
-            $savePath = $app->storagePath('sessions');
-            $session = new FileSession($savePath);
+        $this->registerDefault('session', SessionInterface::class, function (Application $app) {
+            $session = new FileSession($app->storagePath('sessions'));
             $session->start();
             return $session;
-        });
-
-        $app->singleton(SessionInterface::class, function () use ($app) {
-            return $app->make('session');
         });
     }
 
     private function registerCsrf(): void
     {
-        $app = $this->app;
-
-        $app->singleton('csrf', function () use ($app) {
+        $this->registerDefault('csrf', CsrfToken::class, function (Application $app) {
             return new CsrfToken($app->make('session'));
-        });
-
-        $app->singleton(CsrfToken::class, function () use ($app) {
-            return $app->make('csrf');
         });
     }
 
     private function registerLte(): void
     {
-        $app = $this->app;
-
-        $app->singleton('view', function () use ($app) {
+        $this->registerDefault('view', Engine::class, function () {
             return new Engine(
-                viewsPath:  $app->viewsPath(),
-                cachePath:  $app->cachePath('views'),
+                viewsPath:  $this->app->viewsPath(),
+                cachePath:  $this->app->cachePath('views'),
                 autoReload: (bool) env('APP_DEBUG', false),
             );
         });
 
-        // Connect LTE engine to Route::view()
+        // Connect the bound view engine to Route::view()
         Route::setViewRenderer(function (string $name, array $data) {
             return app('view')->render($name, $data);
         });
