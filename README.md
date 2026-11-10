@@ -112,6 +112,31 @@ resolver (`Pipeline::setDefaultResolver()` / `Router::setResolver()`, luany/core
 >= 1.1), so controllers and route middleware get constructor injection. Global
 Kernel middleware is always resolved through the container, also on luany/core 1.0.
 
+With luany/core >= 1.2 the Kernel also registers `Application::call()` as the
+router's action invoker, so **controller methods and closure routes** get
+arguments injected:
+
+```php
+Route::get('/users/{user}/posts/{post}', [PostController::class, 'show']);
+
+class PostController
+{
+    // Services by type, route parameters by name — in any order.
+    public function show(Request $request, PostRepository $posts, User $user, string $post): Response
+    {
+        // ...
+    }
+}
+```
+
+- route parameters are matched **by name** (after `Route::bind()` / `Route::model()`);
+- class-typed parameters receive the `Request` or a container-built service;
+- anything else is filled **by position**, so `show($request, $id)` keeps working;
+- a route-model binding that returns `null` for a non-nullable parameter is a **404**
+  (declare `?User $user` to accept `null`).
+
+`Application::call(callable, array $parameters)` is also available directly.
+
 ### Service Provider lifecycle
 
 ```php
@@ -373,7 +398,8 @@ In the view:
 | `url` | Absolute `http`/`https` URL |
 | `confirmed` | Must match `{field}_confirmation` |
 | `same:field` / `different:field` | Must equal / differ from another field |
-| `unique:table,col` | Must not already exist (requires `setUniqueChecker`) |
+| `unique:table,col,ignore,ignoreCol` | No row has `col` = value (`col` defaults to the field; `ignore` skips the current record, `ignoreCol` defaults to `id`) |
+| `exists:table,col` | A row has `col` = value; for arrays, every element must exist |
 
 **Unknown rules throw `InvalidArgumentException`** — a typo never silently disables validation.
 
@@ -416,13 +442,32 @@ Validator::make($data, ['handle' => 'required|slug']);
 Closures return `true`/`null` (pass), `false` (generic message) or a string (error message).
 Custom rules are skipped for `null`/`''` values.
 
-### unique rule with database
+### unique / exists — database rules
 
 ```php
-Validator::setUniqueChecker(function (string $table, string $column, mixed $value): bool {
-    return (bool) app('db')->table($table)->where($column, $value)->exists();
-});
+validate($request->body(), [
+    'email'       => 'required|email|unique:users,email',          // create
+    'email'       => "required|email|unique:users,email,{$user->id}", // update: ignore own row
+    'category_id' => 'required|integer|exists:categories,id',
+    'tags'        => 'array|exists:tags,id',                          // every id must exist
+]);
 ```
+
+The Kernel wires these rules to the application database automatically when a
+`db` binding (PDO) exists — the skeleton's `DatabaseServiceProvider` registers it.
+Nothing is queried until a rule runs. Table and column names in rules are
+validated and quoted; values are always bound.
+
+Elsewhere (scripts, tests), register a verifier yourself:
+
+```php
+use Luany\Framework\Validation\DatabasePresenceVerifier;
+
+Validator::setPresenceVerifier(new DatabasePresenceVerifier($pdo));
+```
+
+**Without a verifier, `unique` and `exists` throw a `LogicException`** — they never
+pass silently. `setUniqueChecker()` still works but is deprecated.
 
 ---
 
