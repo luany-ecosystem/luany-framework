@@ -6,6 +6,38 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [Unreleased]
+
+### Added
+- Container autowiring: constructor injection via reflection (class/interface types, defaults, nullable, named overrides via `make($id, $params)`); `bind()`/`singleton()` accept a class name (interface → implementation) or no concrete (self-binding); circular dependency detection (`Container\CircularDependencyException`) (#7).
+- PSR-11: `Application` implements `Psr\Container\ContainerInterface` (`get()`/`has()`), plus `bound()` and `build()`. New `Container\NotFoundException` / `ContainerException` (PSR exception interfaces, still `RuntimeException`). New dependency `psr/container ^2.0` (#7).
+- Kernel registers the container as luany/core's class resolver (`Pipeline::setDefaultResolver()` / `Router::setResolver()`, luany/core >= 1.1, guarded for 1.0) and resolves global middleware through the container (#7).
+- Kernel forwards debug mode to `Luany\Lte\Runtime::setDebug()` (luany/lte >= 1.1, guarded for 1.0) so `@dump`/`@dd` are no-ops outside debug.
+- Default `translator` (`Translator::class`) from `config/app.php` or `APP_LOCALE` / `APP_FALLBACK_LOCALE` / `APP_SUPPORTED_LOCALES`; `Application::langPath()` (#6).
+- PSR-3 `Log\FileLogger` (daily files in `storage/logs`) bound as `log` / `LoggerInterface`, configurable via `config/logging.php` / `LOG_LEVEL`; `logger()` helper; unhandled exceptions are logged (#8).
+- Validator rules: `integer`, `boolean`, `array`, `date`, `after`, `before`, `after_or_equal`, `before_or_equal`, `not_in`, `regex`, `not_regex`, `url`, `same`, `different`, `digits`, `between`, `nullable`, `sometimes`; `Validation\Rule` objects, closures and `Validator::extend()` (#5).
+- `FileSession` security options (`$options` / `config/session.php`): httponly, SameSite=Lax, secure auto on HTTPS, `use_strict_mode`, `use_only_cookies` (#4).
+- `CsrfToken::SESSION_KEY`, `FIELD`, `LEGACY_FIELD`, `HEADER` constants; `csrf_field()` helper; `CsrfMiddleware::$failureStatus`.
+- `Support\Url::sameHostOrFallback()`; `ValidationException::$dontFlash` / `filterOldInput()`.
+- `HttpException` and `abort()` accept extra response headers; `Handler::statusCodeFor()`, `headersFor()`, `shouldReport()`, `$dontReport`.
+
+### Changed
+- `Kernel::boot()` only registers `config`, `session`, `csrf`, `view`, `translator` and `log` when no provider bound them (key or class alias); provider bindings are no longer overwritten (#2).
+- `Handler::render()` keeps HTTP statuses (HttpException status, 404, 405 + `Allow`, 422) instead of always 500; `report()` skips expected HTTP exceptions and logs via the PSR-3 logger (#3).
+- `ValidationException` → `422` JSON `{message, errors}` when the request expects JSON (#3).
+- `abort()` messages are HTML-escaped (JSON for API requests) (#3).
+- `validate()` no longer flashes `password*`, `_token`, `csrf_token`, `_method` as old input, and only redirects to a same-host Referer (fallback `/`) (#4).
+- `CsrfMiddleware` accepts the legacy `csrf_token` field, rejects non-string tokens with 403 (no 500), answers JSON requests with JSON, and can be constructed without arguments (falls back to `app('csrf')`).
+- `LocaleMiddleware` ignores `Accept-Language` entries with `q=0` (#6).
+- `config()` without a key returns the repository; an array argument sets values (#9).
+
+### Breaking Changes
+- Unknown validation rules throw `InvalidArgumentException` instead of being ignored (#5).
+- A field with the `boolean` rule that is absent from the input now appears in `validated()` as `false`; boolean values are cast to `bool` (#5).
+- Kernel defaults no longer override provider bindings registered before `boot()` (#2).
+
+---
+
 ## [1.0.0] — 2026-03-23
 
 ### Added
