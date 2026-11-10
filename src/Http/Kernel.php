@@ -123,10 +123,13 @@ class Kernel implements KernelInterface
      * Order:
      *   1. ValidationException → 422 JSON {message, errors} when the request
      *      expects JSON, otherwise a redirect (errors are already flashed).
-     *   2. HttpException (abort()) → its status/headers; escaped HTML or JSON.
-     *   3. MethodNotAllowedException → 405 with Allow header.
-     *   4. Everything else → app Handler (report + render). Without a bound
-     *      Handler: RouteNotFoundException → 404, otherwise 500.
+     *   2. HTTP exceptions (abort(), 404, 405) for JSON clients → JSON with
+     *      the exception's status and headers.
+     *   3. Everything else, including HTML HTTP exceptions → the application
+     *      Handler (report + render), so custom error pages apply to abort()
+     *      as well as to unmatched routes.
+     *   4. Without a bound Handler (or if it fails): HttpException → its
+     *      status/headers, 405 with Allow, 404, otherwise 500.
      */
     protected function handleException(\Throwable $e, ?Request $request = null): Response
     {
@@ -142,13 +145,12 @@ class Kernel implements KernelInterface
             return Response::redirect($e->getRedirectTo());
         }
 
-        if ($e instanceof HttpException) {
-            return $this->httpResponse($e->getStatusCode(), $e->getMessage(), $e->getHeaders(), $wantsJson);
-        }
+        $http = $this->httpExceptionParts($e);
 
-        // RFC 7231 §6.5.5 requires a 405 response with an Allow header.
-        if ($e instanceof MethodNotAllowedException) {
-            return $this->httpResponse(405, 'Method Not Allowed', ['Allow' => $e->getAllowHeaderValue()], $wantsJson);
+        // Handler::render() has no access to the request, so JSON clients
+        // keep the Kernel's JSON shape for HTTP errors.
+        if ($http !== null && $wantsJson) {
+            return $this->httpResponse($http[0], $http[1], $http[2], true);
         }
 
         try {
@@ -169,8 +171,8 @@ class Kernel implements KernelInterface
             }
         }
 
-        if ($e instanceof RouteNotFoundException) {
-            return $this->httpResponse(404, 'Not Found', [], $wantsJson);
+        if ($http !== null) {
+            return $this->httpResponse($http[0], $http[1], $http[2], $wantsJson);
         }
 
         if (!$handler instanceof Handler) {
@@ -180,6 +182,23 @@ class Kernel implements KernelInterface
         return $wantsJson
             ? Response::json(['message' => 'Server Error'], 500)
             : Response::serverError();
+    }
+
+    /**
+     * Status, message and headers for exceptions that map to an HTTP error
+     * (abort(), unmatched route, wrong method); null for anything else.
+     *
+     * @return array{0: int, 1: string, 2: array<string, string>}|null
+     */
+    private function httpExceptionParts(\Throwable $e): ?array
+    {
+        return match (true) {
+            $e instanceof HttpException             => [$e->getStatusCode(), $e->getMessage(), $e->getHeaders()],
+            // RFC 9110 §15.5.6 requires an Allow header on 405.
+            $e instanceof MethodNotAllowedException => [405, 'Method Not Allowed', ['Allow' => $e->getAllowHeaderValue()]],
+            $e instanceof RouteNotFoundException    => [404, 'Not Found', []],
+            default                                 => null,
+        };
     }
 
     /**

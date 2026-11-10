@@ -213,4 +213,82 @@ class ExceptionStatusTest extends TestCase
         $this->assertSame(302, $response->getStatusCode());
         $this->assertSame('/form', $response->getHeaders()['Location']);
     }
+
+    // ── #13: HTTP exceptions go through the application Handler ──────────────
+
+    private function customPageHandler(): Handler
+    {
+        return new class extends Handler {
+            /** @var array<int, \Throwable> */
+            public array $reported = [];
+
+            public function report(\Throwable $e): void
+            {
+                if ($this->shouldReport($e)) {
+                    $this->reported[] = $e;
+                }
+            }
+
+            public function render(\Throwable $e): \Luany\Core\Http\Response
+            {
+                $response = parent::render($e);
+                return $response->body('custom:' . $response->getStatusCode());
+            }
+        };
+    }
+
+    public function test_abort_uses_application_handler_for_custom_pages(): void
+    {
+        $handler = $this->customPageHandler();
+        $this->app->instance(Handler::class, $handler);
+        $kernel = new TestKernel($this->app);
+        $kernel->boot();
+        Route::get('/secret', fn () => throw new HttpException(403, 'nope', headers: ['X-Reason' => 'policy']));
+
+        $response = $kernel->handle(new Request('GET', '/secret'));
+
+        $this->assertSame(403, $response->getStatusCode());
+        $this->assertSame('custom:403', $response->getBody());
+        $this->assertSame('policy', $response->getHeaders()['X-Reason']);
+        $this->assertSame([], $handler->reported, 'HTTP exceptions are not reported');
+    }
+
+    public function test_method_not_allowed_uses_application_handler_and_keeps_allow(): void
+    {
+        $this->app->instance(Handler::class, $this->customPageHandler());
+        $kernel = new TestKernel($this->app);
+        $kernel->boot();
+        Route::get('/only-get', fn () => 'ok');
+
+        $response = $kernel->handle(new Request('POST', '/only-get'));
+
+        $this->assertSame(405, $response->getStatusCode());
+        $this->assertSame('custom:405', $response->getBody());
+        $this->assertSame('GET', $response->getHeaders()['Allow']);
+    }
+
+    public function test_abort_for_json_clients_stays_json_even_with_handler(): void
+    {
+        $this->app->instance(Handler::class, $this->customPageHandler());
+        $kernel = new TestKernel($this->app);
+        $kernel->boot();
+        Route::get('/api/x', fn () => throw new HttpException(404, 'missing'));
+
+        $response = $kernel->handle(new Request('GET', '/api/x', headers: ['Accept' => 'application/json']));
+
+        $this->assertSame(404, $response->getStatusCode());
+        $this->assertSame('{"message":"missing"}', $response->getBody());
+    }
+
+    public function test_abort_without_handler_keeps_builtin_response(): void
+    {
+        $kernel = new TestKernel($this->app);
+        $kernel->boot();
+        Route::get('/gone', fn () => throw new HttpException(410, '<b>gone</b>'));
+
+        $response = $kernel->handle(new Request('GET', '/gone'));
+
+        $this->assertSame(410, $response->getStatusCode());
+        $this->assertSame('&lt;b&gt;gone&lt;/b&gt;', $response->getBody());
+    }
 }
