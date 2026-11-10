@@ -2,6 +2,8 @@
 
 namespace Luany\Framework\Http;
 
+use Luany\Core\Exceptions\MethodNotAllowedException;
+use Luany\Core\Exceptions\RouteNotFoundException;
 use Luany\Core\Http\Request;
 use Luany\Core\Http\Response;
 use Luany\Core\Middleware\MiddlewareInterface;
@@ -10,6 +12,9 @@ use Luany\Core\Routing\Route;
 use Luany\Framework\Application;
 use Luany\Framework\Contracts\KernelInterface;
 use Luany\Framework\Contracts\SessionInterface;
+use Luany\Framework\Exceptions\Handler;
+use Luany\Framework\Exceptions\HttpException;
+use Luany\Framework\Exceptions\ValidationException;
 use Luany\Framework\Security\CsrfToken;
 use Luany\Framework\Session\FileSession;
 use Luany\Framework\Support\Config;
@@ -99,46 +104,91 @@ class Kernel implements KernelInterface
                     try {
                         return Route::handle($req);
                     } catch (\Throwable $e) {
-                        return $this->handleException($e);
+                        return $this->handleException($e, $req);
                     }
                 });
         } catch (\Throwable $e) {
-            return $this->handleException($e);
+            return $this->handleException($e, $request);
         }
     }
 
-    private function handleException(\Throwable $e): Response
+    /**
+     * Convert an uncaught exception into a Response.
+     *
+     * Order:
+     *   1. ValidationException → 422 JSON {message, errors} when the request
+     *      expects JSON, otherwise a redirect (errors are already flashed).
+     *   2. HttpException (abort()) → its status/headers; escaped HTML or JSON.
+     *   3. MethodNotAllowedException → 405 with Allow header.
+     *   4. Everything else → app Handler (report + render). Without a bound
+     *      Handler: RouteNotFoundException → 404, otherwise 500.
+     */
+    protected function handleException(\Throwable $e, ?Request $request = null): Response
     {
-        // validate() throws ValidationException on failure:
-        // errors are already flashed to session — just redirect back.
-        if ($e instanceof \Luany\Framework\Exceptions\ValidationException) {
+        $wantsJson = $request !== null && $request->expectsJson();
+
+        if ($e instanceof ValidationException) {
+            if ($wantsJson) {
+                return Response::json([
+                    'message' => $e->getMessage(),
+                    'errors'  => $e->getErrors(),
+                ], 422);
+            }
             return Response::redirect($e->getRedirectTo());
         }
 
-        // abort() throws HttpException — convert directly to the matching response.
-        if ($e instanceof \Luany\Framework\Exceptions\HttpException) {
-            return Response::make($e->getMessage(), $e->getStatusCode());
+        if ($e instanceof HttpException) {
+            return $this->httpResponse($e->getStatusCode(), $e->getMessage(), $e->getHeaders(), $wantsJson);
         }
 
-        // Router throws MethodNotAllowedException when URI matches but method doesn't.
         // RFC 7231 §6.5.5 requires a 405 response with an Allow header.
-        if ($e instanceof \Luany\Core\Exceptions\MethodNotAllowedException) {
-            return Response::make('Method Not Allowed', 405)
-                ->header('Allow', $e->getAllowHeaderValue());
+        if ($e instanceof MethodNotAllowedException) {
+            return $this->httpResponse(405, 'Method Not Allowed', ['Allow' => $e->getAllowHeaderValue()], $wantsJson);
         }
 
         try {
-            $handler = $this->app->make(\Luany\Framework\Exceptions\Handler::class);
+            $handler = $this->app->make(Handler::class);
+        } catch (\Throwable) {
+            $handler = null;
+        }
+
+        if ($handler instanceof Handler) {
             try {
                 $handler->report($e);
             } catch (\Throwable) {}
-            return $handler->render($e);
-        } catch (\Throwable) {
-            if ($e instanceof \Luany\Core\Exceptions\RouteNotFoundException) {
-                return Response::notFound();
+
+            try {
+                return $handler->render($e);
+            } catch (\Throwable) {
+                // fall through to the built-in responses
             }
-            return Response::serverError();
         }
+
+        if ($e instanceof RouteNotFoundException) {
+            return $this->httpResponse(404, 'Not Found', [], $wantsJson);
+        }
+
+        return $wantsJson
+            ? Response::json(['message' => 'Server Error'], 500)
+            : Response::serverError();
+    }
+
+    /**
+     * Build a plain HTTP error response. The message is HTML-escaped.
+     *
+     * @param array<string, string> $headers
+     */
+    private function httpResponse(int $status, string $message, array $headers, bool $json): Response
+    {
+        if ($json) {
+            return Response::json(['message' => $message], $status, $headers);
+        }
+
+        return Response::make(
+            htmlspecialchars($message, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'),
+            $status,
+            ['Content-Type' => 'text/html; charset=UTF-8'] + $headers
+        );
     }
 
     public function terminate(Request $request, Response $response): void

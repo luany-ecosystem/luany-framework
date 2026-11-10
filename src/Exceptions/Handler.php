@@ -2,6 +2,8 @@
 
 namespace Luany\Framework\Exceptions;
 
+use Luany\Core\Exceptions\MethodNotAllowedException;
+use Luany\Core\Exceptions\RouteNotFoundException;
 use Luany\Core\Http\Response;
 
 /**
@@ -14,17 +16,49 @@ use Luany\Core\Http\Response;
  *   - render() → return custom Response per exception type
  *
  * The Kernel resolves this from the container on every uncaught exception.
+ *
+ * HTTP exceptions keep their status code: HttpException (abort()) uses its
+ * own status, RouteNotFoundException → 404, MethodNotAllowedException → 405
+ * (with an Allow header), ValidationException → 422. Everything else is a 500.
+ * Subclasses that override render() can call parent::render($e) as a fallback
+ * or use statusCodeFor()/headersFor() directly.
  */
 abstract class Handler
 {
+    /**
+     * Exception types that are never reported (expected HTTP outcomes).
+     *
+     * @var array<int, class-string<\Throwable>>
+     */
+    protected array $dontReport = [
+        HttpException::class,
+        ValidationException::class,
+        RouteNotFoundException::class,
+        MethodNotAllowedException::class,
+    ];
+
     public function __construct(protected bool $debug = false) {}
 
     /**
      * Report the exception — log, notify external services, etc.
      * Called before render(). Failures here are silently swallowed.
+     *
+     * Uses the container's PSR-3 logger ('log') when available,
+     * otherwise PHP's error_log().
      */
     public function report(\Throwable $e): void
     {
+        if (!$this->shouldReport($e)) {
+            return;
+        }
+
+        $logger = $this->logger();
+
+        if ($logger !== null) {
+            $logger->error(sprintf('%s: %s', get_class($e), $e->getMessage()), ['exception' => $e]);
+            return;
+        }
+
         error_log(sprintf(
             '[%s] %s in %s on line %d',
             get_class($e),
@@ -35,16 +69,105 @@ abstract class Handler
     }
 
     /**
+     * Determine if the exception should be reported.
+     */
+    public function shouldReport(\Throwable $e): bool
+    {
+        foreach ($this->dontReport as $type) {
+            if ($e instanceof $type) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /**
      * Render the exception into an HTTP Response.
      * Override to return custom views per exception type.
      */
     public function render(\Throwable $e): Response
     {
-        if ($this->debug) {
-            return Response::make($this->debugPage($e), 500);
+        $status  = $this->statusCodeFor($e);
+        $headers = $this->headersFor($e);
+
+        if ($status >= 500) {
+            $response = $this->debug
+                ? Response::make($this->debugPage($e), $status)
+                : Response::serverError();
+
+            return $response->status($status)->withHeaders($headers);
         }
 
-        return Response::serverError();
+        return Response::make($this->httpErrorPage($e, $status), $status)
+            ->withHeaders(['Content-Type' => 'text/html; charset=UTF-8'] + $headers);
+    }
+
+    /**
+     * The HTTP status code an exception maps to.
+     */
+    public function statusCodeFor(\Throwable $e): int
+    {
+        return match (true) {
+            $e instanceof HttpException             => $e->getStatusCode(),
+            $e instanceof ValidationException       => 422,
+            $e instanceof RouteNotFoundException    => 404,
+            $e instanceof MethodNotAllowedException => 405,
+            default                                 => 500,
+        };
+    }
+
+    /**
+     * Extra response headers an exception requires (e.g. Allow on 405).
+     *
+     * @return array<string, string>
+     */
+    public function headersFor(\Throwable $e): array
+    {
+        if ($e instanceof MethodNotAllowedException) {
+            return ['Allow' => $e->getAllowHeaderValue()];
+        }
+
+        if ($e instanceof HttpException) {
+            return $e->getHeaders();
+        }
+
+        return [];
+    }
+
+    /**
+     * Minimal HTML page for 4xx errors. The message is HTML-escaped.
+     * Only HttpException messages (set by the developer via abort()) are shown;
+     * router messages contain the request URI and are replaced by the reason.
+     */
+    protected function httpErrorPage(\Throwable $e, int $status): string
+    {
+        $message = $e instanceof HttpException
+            ? $e->getMessage()
+            : (new HttpException($status))->getMessage();
+
+        return sprintf(
+            '<h1>%d — %s</h1>',
+            $status,
+            htmlspecialchars($message, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8')
+        );
+    }
+
+    /**
+     * The PSR-3 logger bound in the container, if any.
+     */
+    protected function logger(): ?\Psr\Log\LoggerInterface
+    {
+        try {
+            $app = \Luany\Framework\Application::getInstance();
+            if ($app->bound('log')) {
+                $logger = $app->make('log');
+                return $logger instanceof \Psr\Log\LoggerInterface ? $logger : null;
+            }
+        } catch (\Throwable) {
+        }
+
+        return null;
     }
 
     // ── Private ───────────────────────────────────────────────────────────────

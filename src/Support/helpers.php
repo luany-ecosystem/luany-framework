@@ -273,11 +273,16 @@ if (!function_exists('abort')) {
      *   abort(404);
      *   abort(403, 'Forbidden');
      *   abort(422, 'Unprocessable content');
+     *   abort(429, 'Slow down', ['Retry-After' => '60']);
      *
+     * The message is HTML-escaped when rendered, so it is safe to include
+     * user input.
+     *
+     * @param array<string, string> $headers
      * @throws \Luany\Framework\Exceptions\HttpException
      */
-    function abort(int $code, string $message = ''): never
+    function abort(int $code, string $message = '', array $headers = []): never
     {
-        throw new \Luany\Framework\Exceptions\HttpException($code, $message);
+        throw new \Luany\Framework\Exceptions\HttpException($code, $message, null, $headers);
     }
 }
