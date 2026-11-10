@@ -6,7 +6,7 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
-## [Unreleased]
+## [1.1.0] — 2026-11-10
 
 ### Added
 - Container autowiring: constructor injection via reflection (class/interface types, defaults, nullable, named overrides via `make($id, $params)`); `bind()`/`singleton()` accept a class name (interface → implementation) or no concrete (self-binding); circular dependency detection (`Container\CircularDependencyException`) (#7).
