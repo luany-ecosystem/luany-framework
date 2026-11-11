@@ -344,3 +344,96 @@ if (!function_exists('logger')) {
         return null;
     }
 }
+
+// ── URLs ──────────────────────────────────────────────────────────────────
+
+if (!function_exists('url')) {
+    /**
+     * Absolute URL for a path, based on app.url / APP_URL.
+     *
+     *   url()            → http://localhost:8000
+     *   url('/posts/1')  → http://localhost:8000/posts/1
+     */
+    function url(string $path = ''): string
+    {
+        $base = '';
+        try {
+            $base = (string) (config('app.url') ?? '');
+        } catch (\Throwable) {
+        }
+        if ($base === '') {
+            $base = (string) env('APP_URL', '');
+        }
+
+        $path = '/' . ltrim($path, '/');
+        return rtrim($base, '/') . ($path === '/' ? '' : $path);
+    }
+}
+
+if (!function_exists('route')) {
+    /**
+     * URL of a named route: route('posts.show', ['id' => 5]).
+     *
+     * @param array<string, mixed> $params
+     */
+    function route(string $name, array $params = []): string
+    {
+        $uri = \Luany\Core\Routing\Route::router()->getNamedRoute($name, $params);
+
+        if ($uri === null) {
+            throw new \RuntimeException("Named route [{$name}] is not defined.");
+        }
+
+        return url($uri);
+    }
+}
+
+if (!function_exists('asset')) {
+    /**
+     * URL of a file in public/assets: asset('css/app.css').
+     */
+    function asset(string $path): string
+    {
+        return url('assets/' . ltrim($path, '/'));
+    }
+}
+
+if (!function_exists('e')) {
+    /**
+     * HTML-escape a value (what {{ }} does in LTE views).
+     */
+    function e(mixed $value): string
+    {
+        return htmlspecialchars((string) $value, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+    }
+}
+
+// ── Flash messages ────────────────────────────────────────────────────────
+
+if (!function_exists('flash')) {
+    /**
+     * One-request message for the next page: flash('success', 'Saved.').
+     */
+    function flash(string $type, string $message): void
+    {
+        session()->flash('flash_message', ['type' => $type, 'message' => $message]);
+    }
+}
+
+if (!function_exists('get_flash')) {
+    /**
+     * The flash message set on the previous request, if any.
+     *
+     * @return array{type: string, message: string}|null
+     */
+    function get_flash(): ?array
+    {
+        $flash = session()->get('flash_message');
+
+        if (!is_array($flash) || !isset($flash['type'], $flash['message'])) {
+            return null;
+        }
+
+        return ['type' => (string) $flash['type'], 'message' => (string) $flash['message']];
+    }
+}
