@@ -418,6 +418,7 @@ class Kernel implements KernelInterface
         });
 
         $this->configureLteRuntime();
+        $this->configureTimezone();
 
         // Connect the bound view engine to Route::view()
         Route::setViewRenderer(function (string $name, array $data) {
@@ -481,6 +482,24 @@ class Kernel implements KernelInterface
             }
             throw new \LogicException('No PDO connection available for the unique / exists validation rules.');
         }));
+    }
+
+    /**
+     * Default timezone from config('app.timezone'), then APP_TIMEZONE
+     * (left untouched when neither is set).
+     */
+    private function configureTimezone(): void
+    {
+        $timezone = null;
+        try {
+            $timezone = config('app.timezone');
+        } catch (\Throwable) {
+        }
+        $timezone ??= env('APP_TIMEZONE');
+
+        if (is_string($timezone) && $timezone !== '' && in_array($timezone, \DateTimeZone::listIdentifiers(), true)) {
+            date_default_timezone_set($timezone);
+        }
     }
 
     private function configureLteRuntime(): void

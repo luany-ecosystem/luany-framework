@@ -6,6 +6,15 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [Unreleased] — 1.3.0
+
+### Added
+- Helpers `url()`, `route()`, `asset()`, `e()`, `flash()`, `get_flash()` (previously defined by the skeleton; existing app definitions guarded by `function_exists` keep working).
+- `Http\Middleware\LiveReloadMiddleware` — `luany dev` live reload (previously the skeleton's `DevMiddleware`): development + loopback only, injects before the last `</body>`, skips non-HTML and non-2xx responses.
+- Kernel applies `config('app.timezone')` / `APP_TIMEZONE`.
+
+---
+
 ## [1.2.0] — 2026-11-11
 
 ### Added

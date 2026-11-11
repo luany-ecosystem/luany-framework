@@ -593,6 +593,23 @@ All helpers are in `src/Support/helpers.php` and auto-loaded via Composer.
 | `abort(int $code, string $message, array $headers)` | Abort with HTTP error |
 | `__(string $key, array $replace)` | Translate a key |
 | `locale()` | Get current locale |
+| `url(string $path = '')` | Absolute URL (from `app.url` / `APP_URL`) |
+| `route(string $name, array $params)` | URL of a named route |
+| `asset(string $path)` | URL of a file in `public/assets` |
+| `e(mixed $value)` | HTML-escape a value |
+| `flash(string $type, string $message)` / `get_flash()` | One-request flash message |
+
+### Live reload
+
+`Luany\Framework\Http\Middleware\LiveReloadMiddleware` serves the `luany dev`
+browser client and injects it into HTML responses — only when `APP_ENV=development`
+(or `local`) **and** the request comes from the loopback interface. Register it first in
+the application Kernel.
+
+### Timezone
+
+`config('app.timezone')` (or `APP_TIMEZONE`) is applied with `date_default_timezone_set()`
+during boot; invalid identifiers are ignored.
 
 ---
 
