@@ -6,7 +6,7 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
-## [Unreleased] — 1.3.0
+## [1.3.0] — 2026-11-11
 
 ### Added
 - Helpers `url()`, `route()`, `asset()`, `e()`, `flash()`, `get_flash()` (previously defined by the skeleton; existing app definitions guarded by `function_exists` keep working).
