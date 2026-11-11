@@ -6,7 +6,7 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
-## [Unreleased] — 1.2.0
+## [1.2.0] — 2026-11-11
 
 ### Added
 - **Method injection** — `Application::call()` resolves parameters by name (route parameters), by type (request / container services) and by position. With luany/core ≥ 1.2 the Kernel uses it for every route action: controller methods and closures can type-hint services, route parameters arrive by name in any order, and existing `($request, $id)` signatures keep working. (#11)
