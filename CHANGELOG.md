@@ -6,6 +6,23 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [Unreleased] — 1.2.0
+
+### Added
+- **Method injection** — `Application::call()` resolves parameters by name (route parameters), by type (request / container services) and by position. With luany/core ≥ 1.2 the Kernel uses it for every route action: controller methods and closures can type-hint services, route parameters arrive by name in any order, and existing `($request, $id)` signatures keep working. (#11)
+- A route-model binding that returns `null` for a non-nullable parameter now yields **404** instead of a `TypeError`. (#11)
+- **`exists:table,column`** rule (arrays: every element must exist) and **`unique:table,column,ignore,ignoreColumn`** with update support. (#12)
+- `PresenceVerifierInterface`, `DatabasePresenceVerifier` and `Validator::setPresenceVerifier()`. The Kernel registers a verifier from the `db` PDO binding automatically (lazy). (#12)
+
+### Changed
+- **`unique` no longer passes silently without a database.** Without a presence verifier (or the legacy `setUniqueChecker()`), `unique` and `exists` throw a `LogicException`. (#12)
+- Requires luany/core ^1.2.
+
+### Deprecated
+- `Validator::setUniqueChecker()` — use `setPresenceVerifier()`.
+
+---
+
 ## [1.1.1] — 2026-11-10
 
 ### Fixed

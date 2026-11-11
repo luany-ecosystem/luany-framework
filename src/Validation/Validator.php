@@ -35,7 +35,17 @@ namespace Luany\Framework\Validation;
  *   confirmed              — field must have a matching {field}_confirmation
  *   same:{field}           — must equal another field
  *   different:{field}      — must differ from another field
- *   unique:{table},{column} — (callback-based) field must be unique
+ *   unique:{table},{column},{ignore},{ignoreColumn}
+ *                          — no row in {table} has {column} = value (column defaults
+ *                            to the field name). {ignore} skips the current record when
+ *                            updating: unique:users,email,42,id
+ *   exists:{table},{column} — a row in {table} has {column} = value; for arrays every
+ *                            element must exist
+ *
+ * unique / exists need a PresenceVerifierInterface. luany/framework's Kernel
+ * registers one automatically from the 'db' (PDO) container binding; use
+ * Validator::setPresenceVerifier() otherwise. Without a verifier these rules
+ * throw a LogicException — they never pass silently.
  *
  * Unknown rule names throw \InvalidArgumentException (a typo must never
  * silently disable validation). Register extra named rules with extend().
@@ -84,6 +94,9 @@ class Validator
      */
     protected static $uniqueChecker = null;
 
+    /** Presence verifier for the unique / exists rules. */
+    protected static ?PresenceVerifierInterface $presenceVerifier = null;
+
     /**
      * Named custom rules registered via extend().
      *
@@ -96,7 +109,7 @@ class Validator
         'required', 'sometimes', 'nullable', 'string', 'email', 'integer', 'numeric',
         'boolean', 'array', 'date', 'after', 'before', 'after_or_equal', 'before_or_equal',
         'min', 'max', 'between', 'digits', 'in', 'not_in', 'regex', 'not_regex', 'url',
-        'confirmed', 'same', 'different', 'unique',
+        'confirmed', 'same', 'different', 'unique', 'exists',
     ];
 
     /** Rules whose parameter is taken verbatim (not split on commas). */
@@ -131,8 +144,23 @@ class Validator
     }
 
     /**
+     * Set the presence verifier used by the unique / exists rules
+     * (null removes it).
+     */
+    public static function setPresenceVerifier(?PresenceVerifierInterface $verifier): void
+    {
+        static::$presenceVerifier = $verifier;
+    }
+
+    public static function getPresenceVerifier(): ?PresenceVerifierInterface
+    {
+        return static::$presenceVerifier;
+    }
+
+    /**
      * Register a callback for the 'unique' rule.
      *
+     * @deprecated Use setPresenceVerifier(); a registered verifier takes precedence.
      * @param callable $checker fn(string $table, string $column, mixed $value): bool
      */
     public static function setUniqueChecker(callable $checker): void
@@ -364,6 +392,7 @@ class Validator
             'same'            => $this->validateSame($field, $value, $params, true),
             'different'       => $this->validateSame($field, $value, $params, false),
             'unique'          => $this->validateUnique($field, $value, $params),
+            'exists'          => $this->validateExists($field, $value, $params),
             default           => throw new \InvalidArgumentException("Unknown validation rule [{$name}] for field [{$field}]."),
         };
     }
@@ -797,24 +826,68 @@ class Validator
             return null;
         }
 
-        if (static::$uniqueChecker === null) {
-            // No checker registered — cannot validate, skip silently
-            return null;
-        }
-
-        $table = $params[0] ?? '';
-        $column = $params[1] ?? $field;
+        $table  = $params[0] ?? '';
+        $column = ($params[1] ?? '') !== '' ? $params[1] : $field;
 
         if ($table === '') {
+            throw new \InvalidArgumentException("Rule [unique] on field [{$field}] needs a table: unique:table,column.");
+        }
+
+        $ignore       = $params[2] ?? null;
+        $ignoreColumn = ($params[3] ?? '') !== '' ? $params[3] : 'id';
+        if ($ignore === '' || $ignore === null || strtoupper($ignore) === 'NULL') {
+            $ignore = null;
+        }
+
+        if (static::$presenceVerifier === null && static::$uniqueChecker !== null) {
+            // Legacy callback (no ignore support).
+            return (static::$uniqueChecker)($table, $column, $value)
+                ? "The {$field} has already been taken."
+                : null;
+        }
+
+        $count = $this->verifier('unique')->count($table, $column, [$value], $ignore === null ? null : $ignoreColumn, $ignore);
+
+        return $count > 0 ? "The {$field} has already been taken." : null;
+    }
+
+    /** @param array<int, string> $params */
+    private function validateExists(string $field, mixed $value, array $params): ?string
+    {
+        if ($value === null || $value === '' || $value === []) {
             return null;
         }
 
-        $exists = (static::$uniqueChecker)($table, $column, $value);
+        $table  = $params[0] ?? '';
+        $column = ($params[1] ?? '') !== '' ? $params[1] : $field;
 
-        if ($exists) {
-            return "The {$field} has already been taken.";
+        if ($table === '') {
+            throw new \InvalidArgumentException("Rule [exists] on field [{$field}] needs a table: exists:table,column.");
         }
 
-        return null;
+        $values = is_array($value) ? array_values(array_unique(array_map(
+            fn ($v) => is_scalar($v) ? (string) $v : '',
+            $value
+        ))) : [$value];
+
+        if (is_array($value) && in_array('', $values, true)) {
+            return "The selected {$field} is invalid.";
+        }
+
+        $count = $this->verifier('exists')->count($table, $column, $values);
+
+        return $count >= count($values) ? null : "The selected {$field} is invalid.";
+    }
+
+    private function verifier(string $rule): PresenceVerifierInterface
+    {
+        if (static::$presenceVerifier === null) {
+            throw new \LogicException(
+                "The [{$rule}] validation rule needs a database: register one with "
+                . 'Validator::setPresenceVerifier() (luany/framework does it automatically when a "db" PDO binding exists).'
+            );
+        }
+
+        return static::$presenceVerifier;
     }
 }

@@ -10,6 +10,7 @@ use Luany\Core\Middleware\MiddlewareInterface;
 use Luany\Core\Middleware\Pipeline;
 use Luany\Core\Routing\Route;
 use Luany\Framework\Application;
+use Luany\Framework\Container\MissingModelException;
 use Luany\Framework\Contracts\KernelInterface;
 use Luany\Framework\Contracts\SessionInterface;
 use Luany\Framework\Exceptions\Handler;
@@ -20,6 +21,8 @@ use Luany\Framework\Session\FileSession;
 use Luany\Framework\Log\FileLogger;
 use Luany\Framework\Support\Config;
 use Luany\Framework\Support\Translator;
+use Luany\Framework\Validation\DatabasePresenceVerifier;
+use Luany\Framework\Validation\Validator;
 use Luany\Lte\Engine;
 use Psr\Log\LoggerInterface;
 
@@ -87,6 +90,7 @@ class Kernel implements KernelInterface
         $this->registerResolver();
         $this->loadRoutes();
         $this->app->bootProviders();
+        $this->configurePresenceVerifier(); // after providers: they may bind 'db' or set their own
 
         $this->booted = true;
     }
@@ -274,6 +278,25 @@ class Kernel implements KernelInterface
         // Guarded so the framework stays installable with luany/core 1.0.
         self::callIfExists(Pipeline::class, 'setDefaultResolver', $resolver);
         self::callIfExists(Route::router(), 'setResolver', $resolver);
+
+        // luany/core 1.2+: resolve action arguments through the container —
+        // services by type, route parameters by name, the rest by position.
+        self::callIfExists(Route::router(), 'setInvoker', $this->actionInvoker());
+    }
+
+    /**
+     * @return \Closure(callable, Request, array<string, mixed>): mixed
+     */
+    private function actionInvoker(): \Closure
+    {
+        return function (callable $action, Request $request, array $params): mixed {
+            try {
+                return $this->app->call($action, array_merge([$request], $params));
+            } catch (MissingModelException $e) {
+                // A route-model binding found nothing (e.g. User::find($id) === null).
+                throw new HttpException(404, 'Not Found', $e);
+            }
+        };
     }
 
     /**
@@ -423,6 +446,43 @@ class Kernel implements KernelInterface
      * Tell luany/lte's runtime whether debug directives (@dump/@dd) are active.
      * Luany\Lte\Runtime exists from luany/lte 1.1; on 1.0 this is a no-op.
      */
+    /**
+     * Wire the unique / exists validation rules to the application database:
+     * the 'db' binding (PDO, as registered by the skeleton's
+     * DatabaseServiceProvider), or an object exposing getPdo() bound as
+     * 'connection'. Resolved lazily — no connection is opened until a rule
+     * needs it. An explicitly configured verifier is left untouched.
+     */
+    private function configurePresenceVerifier(): void
+    {
+        if (Validator::getPresenceVerifier() !== null) {
+            return;
+        }
+
+        if (!$this->app->has('db') && !$this->app->has('connection') && !$this->app->has(\PDO::class)) {
+            return;
+        }
+
+        Validator::setPresenceVerifier(new DatabasePresenceVerifier(function (): \PDO {
+            foreach (['db', 'connection', \PDO::class] as $id) {
+                if (!$this->app->has($id)) {
+                    continue;
+                }
+                $entry = $this->app->make($id);
+                if ($entry instanceof \PDO) {
+                    return $entry;
+                }
+                if (is_object($entry) && method_exists($entry, 'getPdo')) {
+                    $pdo = $entry->getPdo();
+                    if ($pdo instanceof \PDO) {
+                        return $pdo;
+                    }
+                }
+            }
+            throw new \LogicException('No PDO connection available for the unique / exists validation rules.');
+        }));
+    }
+
     private function configureLteRuntime(): void
     {
         if (class_exists(\Luany\Lte\Runtime::class)) {

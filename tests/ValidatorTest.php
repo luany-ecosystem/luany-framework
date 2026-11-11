@@ -312,20 +312,18 @@ class ValidatorTest extends TestCase
         $this->assertSame('email', $receivedCol);
     }
 
-    public function testUniqueSkipsWhenNoCheckerRegistered(): void
+    public function testUniqueWithoutVerifierOrCheckerFailsLoudly(): void
     {
-        // Reset to null
-        Validator::setUniqueChecker(fn() => false);
-        // Use reflection to set to null
+        // A unique rule that cannot be checked must never pass silently.
         $ref = new \ReflectionClass(Validator::class);
-        $prop = $ref->getProperty('uniqueChecker');
-        $prop->setValue(null, null);
+        $ref->getProperty('uniqueChecker')->setValue(null, null);
+        Validator::setPresenceVerifier(null);
 
-        $v = Validator::make(
+        $this->expectException(\LogicException::class);
+        Validator::make(
             ['email' => 'test@example.com'],
             ['email' => 'unique:users,email']
         );
-        $this->assertTrue($v->passes());
     }
 
     // ── Combined rules ───────────────────────────────────────────────────────
