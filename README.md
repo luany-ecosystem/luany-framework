@@ -615,7 +615,7 @@ All helpers are in `src/Support/helpers.php` and auto-loaded via Composer.
 | `locale()` | Get current locale |
 | `url(string $path = '')` | Absolute URL (from `app.url` / `APP_URL`) |
 | `route(string $name, array $params)` | URL of a named route |
-| `asset(string $path)` | URL of a file in `public/assets` |
+| `asset(string $path)` | Path of a file in `public/assets`: root-relative (`/assets/css/app.css`, keeps `APP_URL`'s sub-folder), or absolute on `ASSET_URL` / `app.asset_url` (CDN) |
 | `e(mixed $value)` | HTML-escape a value |
 | `flash(string $type, string $message)` / `get_flash()` | One-request flash message |
 

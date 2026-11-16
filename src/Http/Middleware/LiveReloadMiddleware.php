@@ -30,7 +30,7 @@ class LiveReloadMiddleware implements MiddlewareInterface
 
     public function handle(Request $request, callable $next): Response
     {
-        if (!$this->isDevelopment() || !$this->isLocalRequest($request)) {
+        if (!$this->isDevelopment() || !$this->isLocalRequest($request) || !$this->devServerRunning()) {
             return $next($request);
         }
 
@@ -45,6 +45,16 @@ class LiveReloadMiddleware implements MiddlewareInterface
     {
         $env = $_ENV['APP_ENV'] ?? $_SERVER['APP_ENV'] ?? getenv('APP_ENV');
         return $env === 'development' || $env === 'local';
+    }
+
+    /**
+     * `luany dev` exports LDE_WS_PORT to the PHP server it starts. Under
+     * `luany serve`, php -S or a real web server there is no reload server,
+     * so nothing is injected (no 404 for client.js, no WebSocket retries).
+     */
+    protected function devServerRunning(): bool
+    {
+        return (string) getenv('LDE_WS_PORT') !== '';
     }
 
     protected function isLocalRequest(Request $request): bool
