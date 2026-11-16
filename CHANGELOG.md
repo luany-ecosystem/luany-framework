@@ -6,7 +6,7 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
-## [Unreleased]
+## [1.4.0] — 2026-11-16
 
 ### Added
 - Validation rules **`file`**, **`image`** (jpeg, png, gif, bmp, webp — no SVG) and **`mimes:jpg,png`** for `$_FILES`-style arrays; the type is detected from the contents with finfo (client file name without fileinfo). `min` / `max` / `between` measure uploads in kilobytes; an empty file input (`UPLOAD_ERR_NO_FILE`) counts as no value. `tmp_name` must pass `is_uploaded_file()` — `Validator::setUploadedFileVerifier()` replaces the check (PSR-7 servers, tests).
