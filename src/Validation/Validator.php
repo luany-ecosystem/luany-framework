@@ -24,8 +24,16 @@ namespace Luany\Framework\Validation;
  *   after:{date|field}     — date after the given date or other field's value
  *   before:{date|field}    — date before the given date or other field's value
  *   after_or_equal / before_or_equal
- *   min:{n} / max:{n}      — length (string), value (numeric) or count (array)
+ *   min:{n} / max:{n}      — string length, array count, file size in kilobytes, or the
+ *                            value of an int / float — and of a numeric string only when
+ *                            the field also has the numeric or integer rule ("300" with
+ *                            'string|max:255' is 3 characters long, so it passes)
  *   between:{min},{max}    — same semantics as min/max, inclusive
+ *   file                   — a successful upload ($_FILES-style array: name, type,
+ *                            tmp_name, error, size). "No file selected"
+ *                            (UPLOAD_ERR_NO_FILE) counts as empty
+ *   image                  — uploaded jpeg, png, gif, bmp or webp (SVG excluded)
+ *   mimes:{ext},{ext}      — uploaded file whose detected type matches an extension
  *   digits:{n}             — exactly n digits
  *   in:{a},{b},{c}         — field must be one of the listed values
  *   not_in:{a},{b}         — field must not be one of the listed values
@@ -46,6 +54,12 @@ namespace Luany\Framework\Validation;
  * registers one automatically from the 'db' (PDO) container binding; use
  * Validator::setPresenceVerifier() otherwise. Without a verifier these rules
  * throw a LogicException — they never pass silently.
+ *
+ * File rules detect the type from the file contents with finfo when the
+ * fileinfo extension is loaded, otherwise from the client file name. The
+ * tmp_name must pass is_uploaded_file(), so a form field shaped like an
+ * upload cannot point the validator at arbitrary server files; override with
+ * Validator::setUploadedFileVerifier() for PSR-7 servers or tests.
  *
  * Unknown rule names throw \InvalidArgumentException (a typo must never
  * silently disable validation). Register extra named rules with extend().
@@ -109,8 +123,48 @@ class Validator
         'required', 'sometimes', 'nullable', 'string', 'email', 'integer', 'numeric',
         'boolean', 'array', 'date', 'after', 'before', 'after_or_equal', 'before_or_equal',
         'min', 'max', 'between', 'digits', 'in', 'not_in', 'regex', 'not_regex', 'url',
-        'confirmed', 'same', 'different', 'unique', 'exists',
+        'confirmed', 'same', 'different', 'unique', 'exists', 'file', 'image', 'mimes',
     ];
+
+    /** Rules that make min / max / between compare a numeric string by value. */
+    private const NUMERIC_RULES = ['numeric', 'integer'];
+
+    /** MIME types accepted by the image rule. */
+    private const IMAGE_MIMES = ['image/jpeg', 'image/png', 'image/gif', 'image/bmp', 'image/x-ms-bmp', 'image/webp'];
+
+    /** Extension → MIME types, for the mimes rule (and image without fileinfo). */
+    private const MIME_TYPES = [
+        'jpg'  => ['image/jpeg'],
+        'jpeg' => ['image/jpeg'],
+        'png'  => ['image/png'],
+        'gif'  => ['image/gif'],
+        'bmp'  => ['image/bmp', 'image/x-ms-bmp'],
+        'webp' => ['image/webp'],
+        'svg'  => ['image/svg+xml'],
+        'pdf'  => ['application/pdf'],
+        'txt'  => ['text/plain'],
+        'csv'  => ['text/csv', 'text/plain', 'application/csv'],
+        'json' => ['application/json', 'text/plain'],
+        'xml'  => ['application/xml', 'text/xml'],
+        'zip'  => ['application/zip'],
+        'mp3'  => ['audio/mpeg'],
+        'mp4'  => ['video/mp4'],
+        'doc'  => ['application/msword'],
+        'docx' => ['application/vnd.openxmlformats-officedocument.wordprocessingml.document'],
+        'xls'  => ['application/vnd.ms-excel'],
+        'xlsx' => ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'],
+    ];
+
+    /**
+     * Decides whether an upload's tmp_name is a genuine upload
+     * (default: is_uploaded_file()).
+     *
+     * @var (callable(string): bool)|null
+     */
+    protected static $uploadedFileVerifier = null;
+
+    /** @var array<int, string> Rule names of the field being validated. */
+    private array $fieldRules = [];
 
     /** Rules whose parameter is taken verbatim (not split on commas). */
     private const RAW_PARAM_RULES = ['regex', 'not_regex'];
@@ -155,6 +209,18 @@ class Validator
     public static function getPresenceVerifier(): ?PresenceVerifierInterface
     {
         return static::$presenceVerifier;
+    }
+
+    /**
+     * Replace the is_uploaded_file() check used by the file / image / mimes
+     * rules — e.g. for PSR-7 servers whose uploads are not PHP uploads, or for
+     * tests. null restores the default.
+     *
+     * @param (callable(string): bool)|null $verifier Receives the tmp_name path.
+     */
+    public static function setUploadedFileVerifier(?callable $verifier): void
+    {
+        static::$uploadedFileVerifier = $verifier;
     }
 
     /**
@@ -254,6 +320,13 @@ class Validator
             $names   = array_column(array_filter($rules, 'is_array'), 'name');
             $present = array_key_exists($field, $this->data);
             $value   = $this->data[$field] ?? null;
+
+            // A file input left empty is submitted as UPLOAD_ERR_NO_FILE — treat it as no value.
+            if (self::isFileArray($value) && (int) $value['error'] === UPLOAD_ERR_NO_FILE) {
+                $value = null;
+            }
+
+            $this->fieldRules = $names;
 
             // 'sometimes' — absent fields are not validated at all.
             if (!$present && in_array('sometimes', $names, true)) {
@@ -393,6 +466,9 @@ class Validator
             'different'       => $this->validateSame($field, $value, $params, false),
             'unique'          => $this->validateUnique($field, $value, $params),
             'exists'          => $this->validateExists($field, $value, $params),
+            'file'            => $this->validateFile($field, $value),
+            'image'           => $this->validateImage($field, $value),
+            'mimes'           => $this->validateMimes($field, $value, $params),
             default           => throw new \InvalidArgumentException("Unknown validation rule [{$name}] for field [{$field}]."),
         };
     }
@@ -456,25 +532,40 @@ class Validator
     }
 
     /**
-     * Size of a value for min/max/between: count for arrays, numeric value
-     * for numbers / numeric strings, length for other strings.
+     * How min / max / between measure a value: 'file' (kilobytes), 'array'
+     * (count), 'numeric' (value: ints, floats, and numeric strings when the
+     * field has the numeric or integer rule), 'string' (length); null otherwise.
      */
-    private function sizeOf(mixed $value): ?float
+    private function sizeKind(mixed $value): ?string
     {
         return match (true) {
-            is_array($value)   => (float) count($value),
-            is_numeric($value) => (float) $value,
-            is_string($value)  => (float) mb_strlen($value),
-            default            => null,
+            self::isFileArray($value)        => 'file',
+            is_array($value)                 => 'array',
+            is_int($value), is_float($value) => 'numeric',
+            is_numeric($value) && array_intersect(self::NUMERIC_RULES, $this->fieldRules) !== [] => 'numeric',
+            is_string($value)                => 'string',
+            default                          => null,
+        };
+    }
+
+    private function sizeOf(mixed $value): ?float
+    {
+        return match ($this->sizeKind($value)) {
+            'file'    => (float) $value['size'] / 1024,
+            'array'   => (float) count($value),
+            'numeric' => (float) $value,
+            'string'  => (float) mb_strlen($value),
+            default   => null,
         };
     }
 
     private function sizeUnit(mixed $value): string
     {
-        return match (true) {
-            is_array($value)   => ' items',
-            is_numeric($value) => '',
-            default            => ' characters',
+        return match ($this->sizeKind($value)) {
+            'file'    => ' kilobytes',
+            'array'   => ' items',
+            'string'  => ' characters',
+            default   => '',
         };
     }
 
@@ -541,23 +632,16 @@ class Validator
             return null;
         }
 
-        $min = (float) ($params[0] ?? 0);
+        $min  = (float) ($params[0] ?? 0);
+        $size = $this->sizeOf($value);
 
-        if (is_numeric($value)) {
-            if ((float) $value < $min) {
-                return "The {$field} field must be at least {$min}.";
-            }
-        } elseif (is_string($value)) {
-            if (mb_strlen($value) < (int) $min) {
-                return "The {$field} field must be at least " . (int) $min . " characters.";
-            }
-        } elseif (is_array($value)) {
-            if (count($value) < (int) $min) {
-                return "The {$field} field must have at least " . (int) $min . " items.";
-            }
-        }
-
-        return null;
+        return match ($this->sizeKind($value)) {
+            'numeric' => $size < $min ? "The {$field} field must be at least {$min}." : null,
+            'file'    => $size < $min ? "The {$field} field must be at least {$min} kilobytes." : null,
+            'string'  => $size < (int) $min ? "The {$field} field must be at least " . (int) $min . " characters." : null,
+            'array'   => $size < (int) $min ? "The {$field} field must have at least " . (int) $min . " items." : null,
+            default   => null,
+        };
     }
 
     /** @param array<int, string> $params */
@@ -567,23 +651,16 @@ class Validator
             return null;
         }
 
-        $max = (float) ($params[0] ?? 0);
+        $max  = (float) ($params[0] ?? 0);
+        $size = $this->sizeOf($value);
 
-        if (is_numeric($value)) {
-            if ((float) $value > $max) {
-                return "The {$field} field must not exceed {$max}.";
-            }
-        } elseif (is_string($value)) {
-            if (mb_strlen($value) > (int) $max) {
-                return "The {$field} field must not exceed " . (int) $max . " characters.";
-            }
-        } elseif (is_array($value)) {
-            if (count($value) > (int) $max) {
-                return "The {$field} field must not have more than " . (int) $max . " items.";
-            }
-        }
-
-        return null;
+        return match ($this->sizeKind($value)) {
+            'numeric' => $size > $max ? "The {$field} field must not exceed {$max}." : null,
+            'file'    => $size > $max ? "The {$field} field must not be greater than {$max} kilobytes." : null,
+            'string'  => $size > (int) $max ? "The {$field} field must not exceed " . (int) $max . " characters." : null,
+            'array'   => $size > (int) $max ? "The {$field} field must not have more than " . (int) $max . " items." : null,
+            default   => null,
+        };
     }
 
     /** @param array<int, string> $params */
@@ -877,6 +954,118 @@ class Validator
         $count = $this->verifier('exists')->count($table, $column, $values);
 
         return $count >= count($values) ? null : "The selected {$field} is invalid.";
+    }
+
+    private function validateFile(string $field, mixed $value): ?string
+    {
+        if ($this->isEmpty($value)) {
+            return null;
+        }
+
+        if (self::isFileArray($value) && (int) $value['error'] !== UPLOAD_ERR_OK) {
+            return "The {$field} failed to upload.";
+        }
+
+        return $this->isValidUpload($value) ? null : "The {$field} field must be a file.";
+    }
+
+    private function validateImage(string $field, mixed $value): ?string
+    {
+        if ($this->isEmpty($value)) {
+            return null;
+        }
+
+        $ok = $this->isValidUpload($value) && $this->fileMatches(
+            $value,
+            self::IMAGE_MIMES,
+            ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp']
+        );
+
+        return $ok ? null : "The {$field} field must be an image.";
+    }
+
+    /** @param array<int, string> $params */
+    private function validateMimes(string $field, mixed $value, array $params): ?string
+    {
+        if ($this->isEmpty($value)) {
+            return null;
+        }
+
+        $this->requireParams('mimes', $params, 1);
+        $extensions = array_values(array_filter(array_map(fn ($e) => strtolower(trim($e)), $params), fn ($e) => $e !== ''));
+
+        $mimes = [];
+        foreach ($extensions as $extension) {
+            $mimes = array_merge($mimes, self::MIME_TYPES[$extension] ?? []);
+        }
+
+        $ok = $this->isValidUpload($value) && $this->fileMatches($value, $mimes, $extensions);
+
+        return $ok ? null : "The {$field} field must be a file of type: " . implode(', ', $extensions) . '.';
+    }
+
+    /**
+     * Whether $value has the shape of a $_FILES entry for a single file.
+     *
+     * @phpstan-assert-if-true array{name: mixed, type: mixed, tmp_name: mixed, error: mixed, size: mixed} $value
+     */
+    private static function isFileArray(mixed $value): bool
+    {
+        if (!is_array($value)) {
+            return false;
+        }
+
+        foreach (['name', 'type', 'tmp_name', 'error', 'size'] as $key) {
+            if (!array_key_exists($key, $value) || !is_scalar($value[$key])) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /** A completed upload whose tmp_name passes the uploaded-file verifier. */
+    private function isValidUpload(mixed $value): bool
+    {
+        if (!self::isFileArray($value) || (int) $value['error'] !== UPLOAD_ERR_OK) {
+            return false;
+        }
+
+        $path = (string) $value['tmp_name'];
+        if ($path === '') {
+            return false;
+        }
+
+        $verifier = static::$uploadedFileVerifier ?? 'is_uploaded_file';
+
+        return (bool) $verifier($path);
+    }
+
+    /**
+     * Whether an upload's type is one of $mimes — detected from its contents
+     * with finfo — or, without fileinfo, has one of $extensions. Extensions
+     * with no known MIME type are matched against the client file name.
+     *
+     * @param array{name: mixed, type: mixed, tmp_name: mixed, error: mixed, size: mixed} $file
+     * @param array<int, string> $mimes
+     * @param array<int, string> $extensions
+     */
+    private function fileMatches(array $file, array $mimes, array $extensions): bool
+    {
+        $clientExtension = strtolower(pathinfo((string) $file['name'], PATHINFO_EXTENSION));
+        $unmapped        = array_diff($extensions, array_keys(self::MIME_TYPES));
+
+        if (in_array($clientExtension, $unmapped, true)) {
+            return true;
+        }
+
+        if (!class_exists(\finfo::class)) {
+            return in_array($clientExtension, $extensions, true);
+        }
+
+        $mime = (new \finfo(FILEINFO_MIME_TYPE))->file((string) $file['tmp_name']);
+
+        return is_string($mime) && in_array(strtolower($mime), $mimes, true);
     }
 
     private function verifier(string $rule): PresenceVerifierInterface

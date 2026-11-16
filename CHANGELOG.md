@@ -6,6 +6,26 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [Unreleased]
+
+### Added
+- Validation rules **`file`**, **`image`** (jpeg, png, gif, bmp, webp — no SVG) and **`mimes:jpg,png`** for `$_FILES`-style arrays; the type is detected from the contents with finfo (client file name without fileinfo). `min` / `max` / `between` measure uploads in kilobytes; an empty file input (`UPLOAD_ERR_NO_FILE`) counts as no value. `tmp_name` must pass `is_uploaded_file()` — `Validator::setUploadedFileVerifier()` replaces the check (PSR-7 servers, tests).
+- `Handler::renderJson()` — JSON rendering of any exception (`{"message"}`; class, file, line and trace only in debug mode).
+- The Kernel loads routes from the route cache `storage/cache/routes.php` when that file exists (`$routeCacheFile`, `routeCachePath()`); generate it with `Route::cache($kernel->routeCachePath())`.
+- Global (Kernel) middleware accepts PSR-15 middleware, like route middleware (requires luany/core ≥ 1.3).
+
+### Changed
+- `min` / `max` / `between` compare a numeric string by value only when the field also has the `numeric` or `integer` rule; otherwise they measure its length (`"300"` passes `string|max:255`). Ints and floats are still compared by value, arrays by count.
+
+### Fixed
+- Requests that expect JSON received the HTML error page for non-HTTP exceptions when an exception Handler was bound; they now get JSON via `Handler::renderJson()`.
+- luany/database's `ModelNotFoundException` (`findOrFail()` / `firstOrFail()`) now maps to 404 (HTML and JSON) and is not reported. Detected by class name — luany/database stays optional.
+- `Translator` no longer fails with an uninitialised locale when the default locale is not in `supported_locales`: it starts with the fallback locale when supported, otherwise the first supported locale.
+- `Exceptions/Handler.php` embedded the traced Luany logo (~320 KB) as a string, so PHP compiled it on every request; it now lives in `Exceptions/resources/luany-icon.svg` and is read only when a debug page is rendered.
+- `LocaleMiddleware` uses `config('app.locale')` (then `APP_LOCALE`) as the default locale, like the Kernel's translator.
+
+---
+
 ## [1.3.0] — 2026-11-11
 
 ### Added

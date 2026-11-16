@@ -191,7 +191,21 @@ any of them:
 | `translator` | `Support\Translator` | `lang/{locale}.php` (see §12) |
 | `log` | `Psr\Log\LoggerInterface` | `Log\FileLogger` (see §13) |
 
-Then: wire the container as luany/core resolver → load `routes/*.php` → `bootProviders()`.
+Then: wire the container as luany/core resolver → load routes → `bootProviders()`.
+
+Routes come from `routes/*.php`, or from the **route cache**
+`storage/cache/routes.php` when that file exists (override `$routeCacheFile`,
+or set it to `''` to disable). Generate the cache after deploying — routes must
+use controller or `Route::view()` actions, otherwise `Route::cache()` throws —
+and delete it whenever routes change:
+
+```php
+Route::cache($kernel->routeCachePath());       // after booting without a cache
+Route::clearCache($kernel->routeCachePath());
+```
+
+Closure `Route::bind()` resolvers are not cached; register them in a service
+provider (`Route::model()` bindings are cached).
 
 ### Global middleware
 
@@ -390,8 +404,11 @@ In the view:
 | `date` | Parseable date |
 | `after:date\|field`, `before:…` | Date after/before a date or another field |
 | `after_or_equal:…`, `before_or_equal:…` | Inclusive variants |
-| `min:N` / `max:N` | Length (string), value (numeric) or item count (array) |
+| `min:N` / `max:N` | Length (string), item count (array), kilobytes (file), or value (int/float, and numeric strings only with `numeric`/`integer`: `"300"` passes `string\|max:255`) |
 | `between:min,max` | Inclusive, same semantics as min/max |
+| `file` | Successful upload (`$_FILES`-style array); an empty file input counts as no value |
+| `image` | Uploaded jpeg, png, gif, bmp or webp (no SVG) |
+| `mimes:jpg,png` | Uploaded file whose type (detected with finfo, else from the file name) matches an extension |
 | `digits:N` | Exactly N digits |
 | `in:a,b,c` / `not_in:a,b` | Must (not) be one of the listed values |
 | `regex:/…/` / `not_regex:/…/` | Must (not) match — use array syntax if the pattern contains `\|` |
@@ -557,7 +574,10 @@ $app->singleton(\Luany\Framework\Exceptions\Handler::class, fn() => new Handler(
 
 The base `Handler::render()` keeps HTTP statuses: `HttpException` → its status,
 `RouteNotFoundException` → 404, `MethodNotAllowedException` → 405 (with `Allow`),
-`ValidationException` → 422; everything else → 500 (debug page when `debug` is on).
+`ValidationException` → 422, luany/database's `ModelNotFoundException` → 404;
+everything else → 500 (debug page when `debug` is on). For requests that expect
+JSON the Kernel calls `Handler::renderJson()` instead: `{"message": …}`, plus
+`exception`, `file`, `line` and `trace` only in debug mode.
 `Handler::report()` logs through the container logger and skips those expected
 HTTP exceptions (`$dontReport`).
 
@@ -566,7 +586,7 @@ HTTP exceptions (`$dontReport`).
 1. `ValidationException` → 422 JSON when the request expects JSON, else redirect to `$e->getRedirectTo()`
 2. `HttpException` → its status and headers (escaped HTML or JSON)
 3. `MethodNotAllowedException` → 405 with `Allow` header
-4. Everything else → bound `Handler` (`report()` + `render()`); without one,
+4. Everything else → bound `Handler` (`report()` + `render()`, or `renderJson()` for JSON clients); without one,
    `RouteNotFoundException` → 404 and other exceptions are logged and → 500
 
 ---
@@ -661,7 +681,9 @@ A default translator is registered by the Kernel, so `__()`, `locale()` and
 | `supported_locales` | `APP_SUPPORTED_LOCALES` (comma list) | `[locale, fallback]` |
 
 `LocaleMiddleware` picks the locale from the `app_locale` cookie, then
-`Accept-Language` (languages with `q=0` are ignored), then `APP_LOCALE`.
+`Accept-Language` (languages with `q=0` are ignored), then `config('app.locale')`
+(`APP_LOCALE`). If `locale` is not in `supported_locales`, the translator starts
+with `fallback_locale` when supported, otherwise the first supported locale.
 
 ---
 
