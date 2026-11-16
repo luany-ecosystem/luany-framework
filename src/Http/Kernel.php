@@ -57,9 +57,11 @@ class Kernel implements KernelInterface
      * Override in your application's Kernel extension.
      *
      * Entries are class names (resolved through the container, so constructor
-     * dependencies are injected) or MiddlewareInterface instances.
+     * dependencies are injected) or instances of Luany's MiddlewareInterface
+     * or PSR-15's Psr\Http\Server\MiddlewareInterface — like route
+     * middleware. PSR-15 middleware requires luany/core 1.3+.
      *
-     * @var array<int, class-string|MiddlewareInterface>
+     * @var array<int, class-string|object>
      */
     protected array $middleware = [];
 
@@ -69,7 +71,17 @@ class Kernel implements KernelInterface
      */
     protected string $routesFile = 'routes/http.php';
 
+    /**
+     * Route cache file, relative to the base path. When it exists, routes are
+     * loaded from it instead of routes/*.php. Set to '' to disable.
+     */
+    protected string $routeCacheFile = 'storage/cache/routes.php';
+
     private bool $booted = false;
+
+    /** PSR-15 middleware interface and luany/core's adapter (core 1.3+), referenced by name. */
+    private const PSR15_MIDDLEWARE = 'Psr\\Http\\Server\\MiddlewareInterface';
+    private const PSR15_ADAPTER    = 'Luany\\Core\\Psr\\Psr15Middleware';
 
     public function __construct(private Application $app) {}
 
@@ -127,11 +139,13 @@ class Kernel implements KernelInterface
      * Order:
      *   1. ValidationException → 422 JSON {message, errors} when the request
      *      expects JSON, otherwise a redirect (errors are already flashed).
-     *   2. HTTP exceptions (abort(), 404, 405) for JSON clients → JSON with
-     *      the exception's status and headers.
+     *   2. HTTP exceptions (abort(), 404, 405, luany/database's
+     *      ModelNotFoundException → 404) for JSON clients → JSON with the
+     *      exception's status and headers.
      *   3. Everything else, including HTML HTTP exceptions → the application
-     *      Handler (report + render), so custom error pages apply to abort()
-     *      as well as to unmatched routes.
+     *      Handler: report(), then render() — or renderJson() when the request
+     *      expects JSON — so custom error pages apply to abort() as well as
+     *      to unmatched routes.
      *   4. Without a bound Handler (or if it fails): HttpException → its
      *      status/headers, 405 with Allow, 404, otherwise 500.
      */
@@ -169,7 +183,7 @@ class Kernel implements KernelInterface
             } catch (\Throwable) {}
 
             try {
-                return $handler->render($e);
+                return $wantsJson ? $handler->renderJson($e) : $handler->render($e);
             } catch (\Throwable) {
                 // fall through to the built-in responses
             }
@@ -201,6 +215,7 @@ class Kernel implements KernelInterface
             // RFC 9110 §15.5.6 requires an Allow header on 405.
             $e instanceof MethodNotAllowedException => [405, 'Method Not Allowed', ['Allow' => $e->getAllowHeaderValue()]],
             $e instanceof RouteNotFoundException    => [404, 'Not Found', []],
+            is_a($e, Handler::MODEL_NOT_FOUND)      => [404, 'Not Found', []],
             default                                 => null,
         };
     }
@@ -318,8 +333,10 @@ class Kernel implements KernelInterface
     /**
      * Instantiate global middleware through the container, so constructor
      * injection works regardless of the installed luany/core version.
+     * PSR-15 middleware is wrapped in luany/core's Psr15Middleware adapter,
+     * as the route pipeline does.
      *
-     * @param  array<int, class-string|MiddlewareInterface> $middleware
+     * @param  array<int, class-string|object> $middleware
      * @return array<int, MiddlewareInterface>
      */
     private function resolveMiddleware(array $middleware): array
@@ -328,10 +345,20 @@ class Kernel implements KernelInterface
 
         foreach ($middleware as $entry) {
             $instance = is_string($entry) ? $this->resolveClass($entry) : $entry;
+            $name     = is_string($entry) ? $entry : get_debug_type($entry);
+
+            if (is_object($instance) && !$instance instanceof MiddlewareInterface && is_a($instance, self::PSR15_MIDDLEWARE)) {
+                if (!class_exists(self::PSR15_ADAPTER)) {
+                    throw new \RuntimeException("Middleware [{$name}] is PSR-15 middleware, which requires luany/core 1.3 or later");
+                }
+                $adapter  = self::PSR15_ADAPTER;
+                $instance = new $adapter($instance);
+            }
 
             if (!$instance instanceof MiddlewareInterface) {
-                $name = is_string($entry) ? $entry : get_debug_type($entry);
-                throw new \RuntimeException("Middleware [{$name}] must implement MiddlewareInterface");
+                throw new \RuntimeException(
+                    "Middleware [{$name}] must implement Luany\\Core\\Middleware\\MiddlewareInterface or PSR-15's Psr\\Http\\Server\\MiddlewareInterface"
+                );
             }
 
             $resolved[] = $instance;
@@ -565,6 +592,37 @@ class Kernel implements KernelInterface
     }
 
     /**
+     * Absolute path of the route cache file, or null when disabled.
+     *
+     * Generate it after loading the route files, e.g. in a deploy script:
+     *   Route::cache($kernel->routeCachePath());
+     * Delete it (Route::clearCache()) whenever routes change.
+     */
+    public function routeCachePath(): ?string
+    {
+        return $this->routeCacheFile === '' ? null : $this->app->basePath($this->routeCacheFile);
+    }
+
+    /**
+     * Load the routes: from the route cache when the file exists, otherwise
+     * from the route files.
+     *
+     * Cached routes contain controller / Route::view() actions and
+     * Route::model() bindings only — closure Route::bind() resolvers are
+     * not cached, so register those in a service provider.
+     */
+    private function loadRoutes(): void
+    {
+        $cache = $this->routeCachePath();
+
+        if ($cache !== null && is_file($cache) && Route::loadCache($cache)) {
+            return;
+        }
+
+        $this->loadRouteFiles();
+    }
+
+    /**
      * Load route files.
      *
      * Strategy — auto-discovery with deterministic order:
@@ -589,7 +647,7 @@ class Kernel implements KernelInterface
      * Override $routesFile in your application Kernel to change the primary file name.
      * Set $routesFile to '' to skip the primary file and rely solely on auto-discovery.
      */
-    private function loadRoutes(): void
+    private function loadRouteFiles(): void
     {
         $routesDir = $this->app->routesPath();
 

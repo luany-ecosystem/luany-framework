@@ -16,7 +16,7 @@ use Luany\Framework\Support\Translator;
  * Detection order (highest to lowest priority):
  *   1. Cookie 'app_locale'          — explicit user preference
  *   2. Accept-Language HTTP header  — browser preference
- *   3. APP_LOCALE env variable      — application default
+ *   3. config('app.locale')         — application default (APP_LOCALE when unset)
  *   4. 'en'                         — hardcoded fallback
  */
 class LocaleMiddleware implements MiddlewareInterface
@@ -55,14 +55,32 @@ class LocaleMiddleware implements MiddlewareInterface
             }
         }
 
-        // 3. APP_LOCALE env
-        $env = env('APP_LOCALE', 'en');
-        if (in_array($env, $supported, true)) {
-            return $env;
+        // 3. Application default — config('app.locale'), then APP_LOCALE
+        $default = $this->defaultLocale();
+        if (in_array($default, $supported, true)) {
+            return $default;
         }
 
         // 4. Hardcoded fallback
         return 'en';
+    }
+
+    /**
+     * config('app.locale') — the same setting the Kernel's default translator
+     * uses — falling back to APP_LOCALE, then 'en'.
+     */
+    private function defaultLocale(): string
+    {
+        $locale = null;
+        try {
+            $locale = config('app.locale');
+        } catch (\Throwable) {
+            // no config bound (e.g. middleware used outside the Kernel)
+        }
+
+        $locale ??= env('APP_LOCALE', 'en');
+
+        return is_string($locale) && $locale !== '' ? $locale : 'en';
     }
 
     /**

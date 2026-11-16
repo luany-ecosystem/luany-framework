@@ -16,7 +16,7 @@ namespace Luany\Framework\Support;
  * Detection order (highest to lowest priority):
  *   1. Cookie 'app_locale'          — explicit user preference
  *   2. Accept-Language HTTP header  — browser preference
- *   3. APP_LOCALE env variable      — application default
+ *   3. config('app.locale')         — application default (APP_LOCALE when unset)
  *   4. 'en'                         — hardcoded fallback
  */
 class Translator
@@ -33,6 +33,10 @@ class Translator
     private array $supported;
 
     /**
+     * When $locale is not in $supported, the initial locale is $fallback if it
+     * is supported, otherwise the first supported locale. An empty $supported
+     * list leaves $locale active (and setLocale() then rejects every change).
+     *
      * @param array<int, string> $supported
      */
     public function __construct(
@@ -45,7 +49,11 @@ class Translator
         $this->fallback  = $fallback;
         $this->supported = $supported;
 
-        $this->setLocale($locale);
+        $this->activate(match (true) {
+            $supported === [] || in_array($locale, $supported, true) => $locale,
+            in_array($fallback, $supported, true)                     => $fallback,
+            default                                                   => (string) reset($supported),
+        });
     }
 
     // ── Public API ────────────────────────────────────────────
@@ -81,6 +89,11 @@ class Translator
             return;
         }
 
+        $this->activate($locale);
+    }
+
+    private function activate(string $locale): void
+    {
         $this->locale = $locale;
         $this->load($locale);
 
