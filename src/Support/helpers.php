@@ -394,7 +394,26 @@ if (!function_exists('asset')) {
      */
     function asset(string $path): string
     {
-        return url('assets/' . ltrim($path, '/'));
+        // ASSET_URL / app.asset_url: absolute base for assets (CDN).
+        $cdn = '';
+        try {
+            $cdn = (string) (config('app.asset_url') ?? '');
+        } catch (\Throwable) {
+        }
+        if ($cdn === '') {
+            $cdn = (string) env('ASSET_URL', '');
+        }
+
+        $path = 'assets/' . ltrim($path, '/');
+        if ($cdn !== '') {
+            return rtrim($cdn, '/') . '/' . $path;
+        }
+
+        // Root-relative, keeping APP_URL's sub-folder: works on any host and
+        // port (luany serve on another port, LAN IP, proxies) without config.
+        $base = (string) parse_url(url(), PHP_URL_PATH);
+
+        return rtrim($base, '/') . '/' . $path;
     }
 }
 

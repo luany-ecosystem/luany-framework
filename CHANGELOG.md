@@ -6,6 +6,14 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [Unreleased]
+
+### Changed
+- **`asset()` returns a root-relative path** (`/assets/css/app.css`, keeping `APP_URL`'s sub-folder: `/app/assets/…`) instead of an absolute URL on `APP_URL`. Pages no longer lose their CSS/JS when served on another host or port than `APP_URL` (a second `luany serve` port, a LAN IP, a proxy). For a CDN or absolute asset URLs (e.g. in e-mails) set `ASSET_URL` or `app.asset_url`. `url()` and `route()` stay absolute.
+
+### Fixed
+- `LiveReloadMiddleware` injects the reload client only while `luany dev` is running (`LDE_WS_PORT` set). Under `luany serve`, `php -S` or a local web server it injected a script that answered 404 and retried a WebSocket.
+
 ## [1.4.0] — 2026-11-16
 
 ### Added

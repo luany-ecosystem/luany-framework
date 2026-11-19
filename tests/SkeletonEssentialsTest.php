@@ -31,6 +31,7 @@ class SkeletonEssentialsTest extends TestCase
         date_default_timezone_set($this->tz);
         putenv('APP_ENV');
         putenv('LDE_CLIENT_PATH');
+        putenv('LDE_WS_PORT');
         unset($_ENV['APP_ENV'], $_SERVER['APP_ENV']);
     }
 
@@ -49,12 +50,21 @@ class SkeletonEssentialsTest extends TestCase
 
         $this->assertSame('https://luany.dev', url());
         $this->assertSame('https://luany.dev/about', url('about'));
-        $this->assertSame('https://luany.dev/assets/css/app.css', asset('/css/app.css'));
+        $this->assertSame('/assets/css/app.css', asset('/css/app.css'), 'root-relative: any host/port');
         $this->assertSame('https://luany.dev/posts/7', route('posts.show', ['id' => 7]));
         $this->assertSame('&lt;b&gt; &quot;x&quot;', e('<b> "x"'));
 
         $this->expectException(\RuntimeException::class);
         route('missing');
+    }
+
+    public function test_asset_keeps_the_sub_folder_and_supports_a_cdn(): void
+    {
+        $this->boot(['url' => 'https://example.ao/app/']);
+        $this->assertSame('/app/assets/js/app.js', asset('js/app.js'));
+
+        $this->boot(['url' => 'https://example.ao', 'asset_url' => 'https://cdn.example.ao/']);
+        $this->assertSame('https://cdn.example.ao/assets/js/app.js', asset('js/app.js'));
     }
 
     public function test_timezone_from_config(): void
@@ -86,6 +96,9 @@ class SkeletonEssentialsTest extends TestCase
         $this->assertStringNotContainsString('__luany_dev', $mw->handle($local, $this->html())->getBody());
 
         putenv('APP_ENV=development');
+        $this->assertStringNotContainsString('__luany_dev', $mw->handle($local, $this->html())->getBody(), 'luany dev not running');
+
+        putenv('LDE_WS_PORT=35729');
         $body = $mw->handle($local, $this->html())->getBody();
         $this->assertStringContainsString('<script src="/__luany_dev/client.js"></script></body>', $body);
         $this->assertSame(1, substr_count($body, 'client.js'));
@@ -97,6 +110,7 @@ class SkeletonEssentialsTest extends TestCase
     public function test_live_reload_skips_json_and_errors_and_serves_client(): void
     {
         putenv('APP_ENV=development');
+        putenv('LDE_WS_PORT=35729');
         $mw    = new LiveReloadMiddleware();
         $local = new Request('GET', '/', server: ['REMOTE_ADDR' => '::1']);
 
