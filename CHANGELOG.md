@@ -8,6 +8,11 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- **Encrypted environment files** — `Support\EnvironmentCipher` (libsodium XChaCha20-Poly1305, environment name as associated data, random nonce, `LUANY-ENV v1` text format). When there is no `.env`, `Env::load()` decrypts `.env.{APP_ENV}.encrypted` (then `.env.encrypted`) in memory with `LUANY_ENV_KEY_{ENV}` / `LUANY_ENV_KEY`; real environment variables still win; a missing or wrong key fails the boot with a clear message. Managed with the `luany env:*` commands (luany/cli).
+
+## [1.5.0] — 2026-11-19
+
 ### Changed
 - **`asset()` returns a root-relative path** (`/assets/css/app.css`, keeping `APP_URL`'s sub-folder: `/app/assets/…`) instead of an absolute URL on `APP_URL`. Pages no longer lose their CSS/JS when served on another host or port than `APP_URL` (a second `luany serve` port, a LAN IP, a proxy). For a CDN or absolute asset URLs (e.g. in e-mails) set `ASSET_URL` or `app.asset_url`. `url()` and `route()` stay absolute.
 
