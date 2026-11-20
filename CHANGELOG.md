@@ -6,6 +6,11 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [Unreleased]
+
+### Added
+- **Encrypted environment files** — `Support\EnvironmentCipher` (libsodium XChaCha20-Poly1305, environment name as associated data, random nonce, `LUANY-ENV v1` text format). When there is no `.env`, `Env::load()` decrypts `.env.{APP_ENV}.encrypted` (then `.env.encrypted`) in memory with `LUANY_ENV_KEY_{ENV}` / `LUANY_ENV_KEY`; real environment variables still win; a missing or wrong key fails the boot with a clear message. Managed with the `luany env:*` commands (luany/cli).
+
 ## [1.5.0] — 2026-11-19
 
 ### Changed

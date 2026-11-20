@@ -254,6 +254,27 @@ $config->has('app.name');         // true
 $config->all();                   // full array
 ```
 
+### Encrypted environment files
+
+Secrets can live in the repository as `.env.{environment}.encrypted` — useless without the key, which stays on the server or in CI secrets (`LUANY_ENV_KEY_{ENVIRONMENT}`, or `LUANY_ENV_KEY`).
+
+When there is no plain `.env`, `Env::load()` picks the file of `APP_ENV` (then `.env.encrypted`) and decrypts it **in memory** — nothing is written to disk. Real environment variables still win, and a missing or wrong key stops the boot with a clear message.
+
+```bash
+luany env:encrypt --env=production   # .env.production → .env.production.encrypted + a new key
+# on the server:  APP_ENV=production  LUANY_ENV_KEY_PRODUCTION=base64:…
+```
+
+```php
+use Luany\Framework\Support\EnvironmentCipher;
+
+$key  = EnvironmentCipher::generateKey();                         // base64:…
+$file = EnvironmentCipher::encrypt($plain, $key, 'production');
+$env  = EnvironmentCipher::decrypt($file, $key, 'production');
+```
+
+libsodium XChaCha20-Poly1305 with the environment name as associated data, so a staging file cannot be swapped in for production.
+
 ---
 
 ## 6. Session
