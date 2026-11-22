@@ -61,6 +61,9 @@ namespace Luany\Framework\Validation;
  * upload cannot point the validator at arbitrary server files; override with
  * Validator::setUploadedFileVerifier() for PSR-7 servers or tests.
  *
+ * Portuguese names are accepted for every rule (PORTUGUESE_RULES):
+ * 'obrigatorio|texto|max:255', 'inteiro|entre:18,99', 'opcional|data|depois:hoje'…
+ *
  * Unknown rule names throw \InvalidArgumentException (a typo must never
  * silently disable validation). Register extra named rules with extend().
  *
@@ -124,6 +127,41 @@ class Validator
         'boolean', 'array', 'date', 'after', 'before', 'after_or_equal', 'before_or_equal',
         'min', 'max', 'between', 'digits', 'in', 'not_in', 'regex', 'not_regex', 'url',
         'confirmed', 'same', 'different', 'unique', 'exists', 'file', 'image', 'mimes',
+    ];
+
+    /**
+     * Portuguese rule names ("Luany em Português"), always accepted: rules
+     * are data, not API, so 'obrigatorio|texto|max:255' works without luany/pt.
+     * A custom rule registered with extend() under the same name wins.
+     */
+    public const PORTUGUESE_RULES = [
+        'obrigatorio'     => 'required',
+        'opcional'        => 'nullable',
+        'quando_presente' => 'sometimes',
+        'texto'           => 'string',
+        'inteiro'         => 'integer',
+        'numerico'        => 'numeric',
+        'booleano'        => 'boolean',
+        'lista'           => 'array',
+        'data'            => 'date',
+        'depois'          => 'after',
+        'antes'           => 'before',
+        'depois_ou_igual' => 'after_or_equal',
+        'antes_ou_igual'  => 'before_or_equal',
+        'entre'           => 'between',
+        'digitos'         => 'digits',
+        'em'              => 'in',
+        'nao_em'          => 'not_in',
+        'nao_regex'       => 'not_regex',
+        'confirmado'      => 'confirmed',
+        'igual'           => 'same',
+        'diferente'       => 'different',
+        'unico'           => 'unique',
+        'existe'          => 'exists',
+        'ficheiro'        => 'file',
+        'arquivo'         => 'file',
+        'imagem'          => 'image',
+        'tipos'           => 'mimes',
     ];
 
     /** Rules that make min / max / between compare a numeric string by value. */
@@ -404,11 +442,14 @@ class Validator
                 continue;
             }
 
-            if (str_contains($rule, ':')) {
-                [$name, $paramString] = explode(':', $rule, 2);
+            [$name, $paramString] = str_contains($rule, ':') ? explode(':', $rule, 2) : [$rule, null];
+            if (!isset(static::$extensions[$name])) {
+                $name = self::PORTUGUESE_RULES[$name] ?? $name;
+            }
+
+            if ($paramString !== null) {
                 $params = in_array($name, self::RAW_PARAM_RULES, true) ? [$paramString] : explode(',', $paramString);
             } else {
-                $name = $rule;
                 $params = [];
             }
 
