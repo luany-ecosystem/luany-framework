@@ -6,7 +6,7 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
-## [Unreleased]
+## [1.8.0] — 2026-11-22
 
 ### Added
 - **Portuguese validation rule names**, always accepted (no package needed): `obrigatorio`, `opcional`, `quando_presente`, `texto`, `inteiro`, `numerico`, `booleano`, `lista`, `data`, `depois`, `antes`, `depois_ou_igual`, `antes_ou_igual`, `entre`, `digitos`, `em`, `nao_em`, `nao_regex`, `confirmado`, `igual`, `diferente`, `unico`, `existe`, `ficheiro` / `arquivo`, `imagem`, `tipos`. Same behaviour as the English names (`Validator::PORTUGUESE_RULES`); `email`, `url`, `min`, `max`, `regex` are the same in both. A rule registered with `extend()` under one of these names keeps its meaning.
