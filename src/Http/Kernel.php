@@ -437,11 +437,13 @@ class Kernel implements KernelInterface
     private function registerLte(): void
     {
         $this->registerDefault('view', Engine::class, function () {
-            return new Engine(
+            $engine = new Engine(
                 viewsPath:  $this->app->viewsPath(),
                 cachePath:  $this->app->cachePath('views'),
                 autoReload: (bool) env('APP_DEBUG', false),
             );
+
+            return $engine->setSyntax($this->templateSyntax());
         });
 
         $this->configureLteRuntime();
@@ -457,6 +459,23 @@ class Kernel implements KernelInterface
      * Whether the application runs in debug mode: config('app.debug'),
      * falling back to APP_DEBUG.
      */
+    /**
+     * Template syntax for LTE: config('app.syntax'), falling back to
+     * LUANY_SYNTAX, then "en". "pt" adds the Portuguese directive aliases.
+     */
+    protected function templateSyntax(): string
+    {
+        try {
+            $config = $this->app->make('config');
+            if ($config instanceof Config && $config->has('app.syntax')) {
+                return (string) $config->get('app.syntax');
+            }
+        } catch (\Throwable) {
+        }
+
+        return (string) env('LUANY_SYNTAX', 'en');
+    }
+
     protected function isDebug(): bool
     {
         try {

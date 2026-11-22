@@ -6,6 +6,11 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [Unreleased]
+
+### Added
+- **Template syntax**: the view engine reads `config('app.syntax')` (fallback `LUANY_SYNTAX`, default `en`). With `pt`, LTE accepts the Portuguese directive names (`@se`, `@paracada`, `@secao`, …) alongside the English ones. Requires luany/lte 1.4.
+
 ## [1.6.0] — 2026-11-20
 
 ### Added

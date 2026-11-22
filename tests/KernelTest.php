@@ -103,6 +103,24 @@ class KernelTest extends TestCase
         $this->assertTrue($this->app->has('view'));
     }
 
+    public function test_view_engine_uses_the_configured_syntax(): void
+    {
+        $views = '/tmp/luany-kernel-test/views';
+        @mkdir($views, 0777, true);
+        file_put_contents($views . '/pt.lte', '@se($ok)sim@senao não@fimse');
+
+        $_ENV['LUANY_SYNTAX'] = 'pt';
+        putenv('LUANY_SYNTAX=pt');
+        try {
+            (new TestKernel($this->app))->boot();
+            $this->assertSame('sim', trim($this->app->make('view')->render('pt', ['ok' => true])));
+        } finally {
+            unset($_ENV['LUANY_SYNTAX']);
+            putenv('LUANY_SYNTAX');
+            @unlink($views . '/pt.lte');
+        }
+    }
+
     // ── handle — no routes ───────────────────────────────────────────────────
 
     public function test_handle_returns_404_for_unregistered_route(): void
