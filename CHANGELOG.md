@@ -6,6 +6,16 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [Unreleased]
+
+### Added
+- **Email** (`Luany\Framework\Mail`): `app('mailer')` / `mailer()`:
+  `mailer()->to($email, $name)->subject('Bem-vindo')->send('emails.bem-vindo', [...])`.
+  - Emails are LTE views (`views/emails/x.lte`; `x_text.lte` for the plain-text part, otherwise derived from the HTML). Variables are escaped as in any view; English or Portuguese directives both work.
+  - Transports: `log` (default — writes to the log, nothing to configure), `smtp` and `array` (tests). Settings in `config/mail.php`, falling back to `MAIL_MAILER`, `MAIL_FROM_ADDRESS`, `MAIL_FROM_NAME`, `MAIL_HOST`, `MAIL_PORT`, `MAIL_USERNAME`, `MAIL_PASSWORD`, `MAIL_ENCRYPTION` (`tls` STARTTLS required, `ssl`, `none`).
+  - SMTP runs on symfony/mailer (new dependency), kept out of Luany's API: `Mailer`, `Message`, `Address`, `Transport`, `MailException`.
+  - Addresses validated; line breaks rejected in every header value; passwords never appear in exceptions or logs. Failures are `MailException` with stable codes `LUANY-MAIL-001`…`006`.
+
 ## [1.9.0] — 2026-11-23
 
 ### Added

@@ -130,6 +130,27 @@ class KernelTest extends TestCase
         $this->assertSame($this->app->make('auth'), auth());
     }
 
+    public function test_boot_registers_the_mailer_from_env(): void
+    {
+        foreach (['MAIL_MAILER' => 'array', 'MAIL_FROM_ADDRESS' => 'ola@luany.dev'] as $k => $v) {
+            $_ENV[$k] = $v;
+            putenv("{$k}={$v}");
+        }
+        try {
+            (new TestKernel($this->app))->boot();
+            $mailer = mailer();
+            $this->assertInstanceOf(\Luany\Framework\Mail\Transport\ArrayTransport::class, $mailer->transport());
+
+            $mailer->to('ana@example.com')->subject('Oi')->sendText('Olá');
+            $this->assertSame('ola@luany.dev', $mailer->transport()->messages[0]->from?->email);
+        } finally {
+            foreach (['MAIL_MAILER', 'MAIL_FROM_ADDRESS'] as $k) {
+                unset($_ENV[$k]);
+                putenv($k);
+            }
+        }
+    }
+
     // ── handle — no routes ───────────────────────────────────────────────────
 
     public function test_handle_returns_404_for_unregistered_route(): void

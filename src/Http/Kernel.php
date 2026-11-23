@@ -27,6 +27,12 @@ use Luany\Lte\Engine;
 use Luany\Framework\Auth\AuthManager;
 use Luany\Framework\Auth\Hasher;
 use Luany\Framework\Auth\ModelUserProvider;
+use Luany\Framework\Mail\Address;
+use Luany\Framework\Mail\MailException;
+use Luany\Framework\Mail\Mailer;
+use Luany\Framework\Mail\Transport\ArrayTransport;
+use Luany\Framework\Mail\Transport\LogTransport;
+use Luany\Framework\Mail\Transport\SmtpTransport;
 use Psr\Log\LoggerInterface;
 
 /**
@@ -103,6 +109,7 @@ class Kernel implements KernelInterface
         $this->registerLte();
         $this->registerTranslator();
         $this->registerLogger();
+        $this->registerMail();
         $this->registerResolver();
         $this->loadRoutes();
         $this->app->bootProviders();
@@ -469,6 +476,69 @@ class Kernel implements KernelInterface
 
             return $auth;
         });
+    }
+
+    /**
+     * app('mailer') / mailer(). Settings: config/mail.php, then .env —
+     *   default  MAIL_MAILER        log (default) | smtp | array
+     *   from     MAIL_FROM_ADDRESS, MAIL_FROM_NAME
+     *   mailers.smtp: host MAIL_HOST, port MAIL_PORT (587), username
+     *   MAIL_USERNAME, password MAIL_PASSWORD, encryption MAIL_ENCRYPTION (tls)
+     */
+    private function registerMail(): void
+    {
+        $this->registerDefault('mailer', Mailer::class, function (Application $app) {
+            $config = $app->make('config');
+            $get = function (string $key, string $env, mixed $default) use ($config): mixed {
+                $value = $config instanceof Config ? $config->get($key) : null;
+
+                return $value ?? env($env, $default);
+            };
+
+            $mailer = (string) $get('mail.default', 'MAIL_MAILER', 'log');
+            $transport = match ($mailer) {
+                'log'   => new LogTransport($this->logger($app)),
+                'array' => new ArrayTransport(),
+                'smtp'  => new SmtpTransport(
+                    host:       (string) $get('mail.mailers.smtp.host', 'MAIL_HOST', ''),
+                    port:       (int) $get('mail.mailers.smtp.port', 'MAIL_PORT', 587),
+                    username:   (string) $get('mail.mailers.smtp.username', 'MAIL_USERNAME', ''),
+                    password:   (string) $get('mail.mailers.smtp.password', 'MAIL_PASSWORD', ''),
+                    encryption: (string) $get('mail.mailers.smtp.encryption', 'MAIL_ENCRYPTION', 'tls'),
+                ),
+                default => throw new MailException('LUANY-MAIL-005', "Unknown mailer [{$mailer}]: use log, smtp or array."),
+            };
+
+            $address = (string) $get('mail.from.address', 'MAIL_FROM_ADDRESS', '');
+            $from = $address !== '' ? new Address($address, (string) $get('mail.from.name', 'MAIL_FROM_NAME', '')) : null;
+
+            return new Mailer(
+                $transport,
+                $from,
+                fn (string $view, array $data): string => $this->viewEngine($app)->render($view, $data),
+                fn (string $view): bool => $this->viewEngine($app)->findView($view) !== null,
+            );
+        });
+    }
+
+    private function logger(Application $app): LoggerInterface
+    {
+        $logger = $app->make('log');
+        if (!$logger instanceof LoggerInterface) {
+            throw new \RuntimeException('Container entry [log] must implement ' . LoggerInterface::class . '.');
+        }
+
+        return $logger;
+    }
+
+    private function viewEngine(Application $app): Engine
+    {
+        $engine = $app->make('view');
+        if (!$engine instanceof Engine) {
+            throw new \RuntimeException('Container entry [view] must be a ' . Engine::class . ' instance.');
+        }
+
+        return $engine;
     }
 
     private function registerLte(): void

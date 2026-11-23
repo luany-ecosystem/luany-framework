@@ -472,3 +472,18 @@ if (!function_exists('auth')) {
         return $auth;
     }
 }
+
+if (!function_exists('mailer')) {
+    /**
+     * mailer()->to($email)->subject('…')->send('emails.boas-vindas', [...]).
+     */
+    function mailer(): \Luany\Framework\Mail\Mailer
+    {
+        $mailer = app('mailer');
+        if (!$mailer instanceof \Luany\Framework\Mail\Mailer) {
+            throw new \RuntimeException('Container entry [mailer] must be a ' . \Luany\Framework\Mail\Mailer::class . ' instance.');
+        }
+
+        return $mailer;
+    }
+}
