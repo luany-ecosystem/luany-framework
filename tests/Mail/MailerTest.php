@@ -78,6 +78,19 @@ class MailerTest extends TestCase
         $this->assertSame('Olá Ana — Bem-vinda', trim($this->last()->text));
     }
 
+    public function test_text_fallback_keeps_links_and_drops_style_and_script(): void
+    {
+        $text = Mailer::textFromHtml(
+            "<html><head><title>T</title><style>p{color:red}</style></head><body>"
+            . "<script>alert(1)</script><p>Redefina a palavra-passe:</p>"
+            . "<p><a class=\"btn\" href=\"https://app.test/reset?token=abc&amp;email=a%40b.co\">Redefinir</a></p></body></html>"
+        );
+
+        $this->assertStringNotContainsString('color:red', $text);
+        $this->assertStringNotContainsString('alert(1)', $text);
+        $this->assertStringContainsString('Redefinir (https://app.test/reset?token=abc&email=a%40b.co)', $text);
+    }
+
     /** @return array<string, array{\Closure(): mixed, string}> */
     public static function invalid(): array
     {
