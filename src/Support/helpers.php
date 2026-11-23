@@ -487,3 +487,23 @@ if (!function_exists('mailer')) {
         return $mailer;
     }
 }
+
+if (!function_exists('format_date')) {
+    /**
+     * A date in the app's locale: format_date($post->created_at, 'long').
+     * Styles: short (default), medium, long, full, time, datetime.
+     */
+    function format_date(\DateTimeInterface|string|int|null $value, string $style = 'short'): string
+    {
+        $locale = 'en';
+        try {
+            $translator = app('translator');
+            if ($translator instanceof \Luany\Framework\Support\Translator) {
+                $locale = $translator->getLocale();
+            }
+        } catch (\Throwable) {
+        }
+
+        return (new \Luany\Framework\Support\DateFormatter($locale))->format($value, $style);
+    }
+}
