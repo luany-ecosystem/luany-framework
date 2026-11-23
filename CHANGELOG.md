@@ -6,7 +6,7 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
-## [Unreleased]
+## [1.11.0] — 2026-11-23
 
 ### Added
 - **Password reset** — `app('auth.passwords')` (`PasswordBroker`): `sendResetLink(['email' => …], $ip, fn ($user, $token) => …)` and `reset(['email' => …, 'token' => …, 'password' => …])`. Tokens are 64 random hex characters stored only as SHA-256 (`password_reset_tokens` table, `DatabaseTokenRepository::createTableSql()`), compared with `hash_equals()`, single use, valid 60 minutes, one per user, and void once the password changes by any other route. The request answer never reveals whether the email exists; requests are limited per email (3 / 15 min) and per IP (10 / 15 min).
