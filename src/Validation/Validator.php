@@ -121,6 +121,42 @@ class Validator
      */
     protected static array $extensions = [];
 
+    /** @var (\Closure(string, array<string, string>): ?string)|null Translates validation.{key}; null = untranslated. */
+    private static ?\Closure $translator = null;
+
+    /**
+     * Translate the messages: the callback receives 'validation.required'
+     * (and the replacements) and returns the text, or null to keep English.
+     * The Kernel connects it to the app's Translator (lang/{locale}.php).
+     *
+     * @param (callable(string, array<string, string>): ?string)|null $translator
+     */
+    public static function setTranslator(?callable $translator): void
+    {
+        self::$translator = $translator !== null ? \Closure::fromCallable($translator) : null;
+    }
+
+    /**
+     * A message: validation.{key} from the translator, else the English text.
+     *
+     * @param array<string, scalar> $replace
+     */
+    private function msg(string $key, string $field, array $replace, string $english): string
+    {
+        $replace = ['field' => $field] + array_map('strval', $replace);
+
+        $text = self::$translator !== null ? (self::$translator)('validation.' . $key, $replace) : null;
+        if ($text === null) {
+            $text = $english;
+            uksort($replace, fn (string $a, string $b): int => strlen($b) <=> strlen($a));
+            foreach ($replace as $name => $value) {
+                $text = str_replace(':' . $name, $value, $text);
+            }
+        }
+
+        return $text;
+    }
+
     /** Built-in rule names. */
     private const RULES = [
         'required', 'sometimes', 'nullable', 'string', 'email', 'integer', 'numeric',
@@ -555,7 +591,7 @@ class Validator
 
         return $message !== null
             ? str_replace(':field', $field, $message)
-            : "The {$field} field is invalid.";
+            : $this->msg('invalid', $field, [], 'The :field field is invalid.');
     }
 
     private function isEmpty(mixed $value): bool
@@ -621,7 +657,7 @@ class Validator
     private function validateRequired(string $field, mixed $value): ?string
     {
         if ($value === null || $value === '' || $value === []) {
-            return "The {$field} field is required.";
+            return $this->msg('required', $field, [], 'The :field field is required.');
         }
 
         return null;
@@ -634,7 +670,7 @@ class Validator
         }
 
         if (!is_string($value)) {
-            return "The {$field} field must be a string.";
+            return $this->msg('string', $field, [], 'The :field field must be a string.');
         }
 
         return null;
@@ -647,7 +683,7 @@ class Validator
         }
 
         if (!is_string($value) || filter_var($value, FILTER_VALIDATE_EMAIL) === false) {
-            return "The {$field} field must be a valid email address.";
+            return $this->msg('email', $field, [], 'The :field field must be a valid email address.');
         }
 
         return null;
@@ -660,7 +696,7 @@ class Validator
         }
 
         if (!is_numeric($value)) {
-            return "The {$field} field must be numeric.";
+            return $this->msg('numeric', $field, [], 'The :field field must be numeric.');
         }
 
         return null;
@@ -677,10 +713,10 @@ class Validator
         $size = $this->sizeOf($value);
 
         return match ($this->sizeKind($value)) {
-            'numeric' => $size < $min ? "The {$field} field must be at least {$min}." : null,
-            'file'    => $size < $min ? "The {$field} field must be at least {$min} kilobytes." : null,
-            'string'  => $size < (int) $min ? "The {$field} field must be at least " . (int) $min . " characters." : null,
-            'array'   => $size < (int) $min ? "The {$field} field must have at least " . (int) $min . " items." : null,
+            'numeric' => $size < $min ? $this->msg('min.numeric', $field, ['min' => $min], 'The :field field must be at least :min.') : null,
+            'file'    => $size < $min ? $this->msg('min.file', $field, ['min' => $min], 'The :field field must be at least :min kilobytes.') : null,
+            'string'  => $size < (int) $min ? $this->msg('min.string', $field, ['min' => (int) $min], 'The :field field must be at least :min characters.') : null,
+            'array'   => $size < (int) $min ? $this->msg('min.array', $field, ['min' => (int) $min], 'The :field field must have at least :min items.') : null,
             default   => null,
         };
     }
@@ -696,10 +732,10 @@ class Validator
         $size = $this->sizeOf($value);
 
         return match ($this->sizeKind($value)) {
-            'numeric' => $size > $max ? "The {$field} field must not exceed {$max}." : null,
-            'file'    => $size > $max ? "The {$field} field must not be greater than {$max} kilobytes." : null,
-            'string'  => $size > (int) $max ? "The {$field} field must not exceed " . (int) $max . " characters." : null,
-            'array'   => $size > (int) $max ? "The {$field} field must not have more than " . (int) $max . " items." : null,
+            'numeric' => $size > $max ? $this->msg('max.numeric', $field, ['max' => $max], 'The :field field must not exceed :max.') : null,
+            'file'    => $size > $max ? $this->msg('max.file', $field, ['max' => $max], 'The :field field must not be greater than :max kilobytes.') : null,
+            'string'  => $size > (int) $max ? $this->msg('max.string', $field, ['max' => (int) $max], 'The :field field must not exceed :max characters.') : null,
+            'array'   => $size > (int) $max ? $this->msg('max.array', $field, ['max' => (int) $max], 'The :field field must not have more than :max items.') : null,
             default   => null,
         };
     }
@@ -717,8 +753,8 @@ class Validator
         $size = $this->sizeOf($value);
 
         if ($size === null || $size < $min || $size > $max) {
-            $unit = $this->sizeUnit($value);
-            return "The {$field} field must be between {$params[0]} and {$params[1]}{$unit}.";
+            $kind = $this->sizeKind($value) ?? 'numeric';
+            return $this->msg("between.{$kind}", $field, ['min' => $params[0], 'max' => $params[1]], 'The :field field must be between :min and :max' . $this->sizeUnit($value) . '.');
         }
 
         return null;
@@ -736,7 +772,7 @@ class Validator
         $string = is_int($value) ? (string) $value : $value;
 
         if (!is_string($string) || !ctype_digit($string) || strlen($string) !== $length) {
-            return "The {$field} field must be {$length} digits.";
+            return $this->msg('digits', $field, ['digits' => $length], 'The :field field must be :digits digits.');
         }
 
         return null;
@@ -753,7 +789,7 @@ class Validator
         }
 
         if (!is_string($value) || filter_var($value, FILTER_VALIDATE_INT) === false || trim($value) !== $value) {
-            return "The {$field} field must be an integer.";
+            return $this->msg('integer', $field, [], 'The :field field must be an integer.');
         }
 
         return null;
@@ -768,7 +804,7 @@ class Validator
         $normalized = is_string($value) ? strtolower($value) : $value;
 
         if (!in_array($normalized, self::BOOL_TRUE, true) && !in_array($normalized, self::BOOL_FALSE, true)) {
-            return "The {$field} field must be true or false.";
+            return $this->msg('boolean', $field, [], 'The :field field must be true or false.');
         }
 
         return null;
@@ -780,7 +816,7 @@ class Validator
             return null;
         }
 
-        return is_array($value) ? null : "The {$field} field must be an array.";
+        return is_array($value) ? null : $this->msg('array', $field, [], 'The :field field must be an array.');
     }
 
     private function timestamp(mixed $value): ?int
@@ -804,7 +840,7 @@ class Validator
             return null;
         }
 
-        return $this->timestamp($value) === null ? "The {$field} field must be a valid date." : null;
+        return $this->timestamp($value) === null ? $this->msg('date', $field, [], 'The :field field must be a valid date.') : null;
     }
 
     /** @param array<int, string> $params */
@@ -825,8 +861,10 @@ class Validator
 
         $label = str_replace('_', ' ', $operator);
 
+        $error = $this->msg($operator, $field, ['date' => $reference], 'The :field field must be a date ' . $label . ' :date.');
+
         if ($time === null || $threshold === null) {
-            return "The {$field} field must be a date {$label} {$reference}.";
+            return $error;
         }
 
         $ok = match ($operator) {
@@ -836,7 +874,7 @@ class Validator
             default           => $time <= $threshold,
         };
 
-        return $ok ? null : "The {$field} field must be a date {$label} {$reference}.";
+        return $ok ? null : $error;
     }
 
     /** @param array<int, string> $params */
@@ -848,7 +886,7 @@ class Validator
 
         if (!is_scalar($value) || !in_array((string) $value, $params, true)) {
             $allowed = implode(', ', $params);
-            return "The {$field} field must be one of: {$allowed}.";
+            return $this->msg('in', $field, ['values' => $allowed], 'The :field field must be one of: :values.');
         }
 
         return null;
@@ -862,7 +900,7 @@ class Validator
         }
 
         if (!is_scalar($value) || in_array((string) $value, $params, true)) {
-            return "The selected {$field} is invalid.";
+            return $this->msg('selected', $field, [], 'The selected :field is invalid.');
         }
 
         return null;
@@ -878,7 +916,7 @@ class Validator
         $this->requireParams($mustMatch ? 'regex' : 'not_regex', $params, 1);
 
         if (!is_string($value) && !is_int($value) && !is_float($value)) {
-            return "The {$field} field format is invalid.";
+            return $this->msg('regex', $field, [], 'The :field field format is invalid.');
         }
 
         $result = @preg_match($params[0], (string) $value);
@@ -887,7 +925,7 @@ class Validator
             throw new \InvalidArgumentException("Invalid regular expression [{$params[0]}] for field [{$field}].");
         }
 
-        return ($result === 1) === $mustMatch ? null : "The {$field} field format is invalid.";
+        return ($result === 1) === $mustMatch ? null : $this->msg('regex', $field, [], 'The :field field format is invalid.');
     }
 
     private function validateUrl(string $field, mixed $value): ?string
@@ -897,12 +935,12 @@ class Validator
         }
 
         if (!is_string($value) || filter_var($value, FILTER_VALIDATE_URL) === false) {
-            return "The {$field} field must be a valid URL.";
+            return $this->msg('url', $field, [], 'The :field field must be a valid URL.');
         }
 
         $scheme = strtolower((string) parse_url($value, PHP_URL_SCHEME));
 
-        return in_array($scheme, ['http', 'https'], true) ? null : "The {$field} field must be a valid URL.";
+        return in_array($scheme, ['http', 'https'], true) ? null : $this->msg('url', $field, [], 'The :field field must be a valid URL.');
     }
 
     /** @param array<int, string> $params */
@@ -916,11 +954,11 @@ class Validator
         $other = $this->data[$params[0]] ?? null;
 
         if ($same && $value !== $other) {
-            return "The {$field} field must match {$params[0]}.";
+            return $this->msg('same', $field, ['other' => $params[0]], 'The :field field must match :other.');
         }
 
         if (!$same && $value === $other) {
-            return "The {$field} field and {$params[0]} must be different.";
+            return $this->msg('different', $field, ['other' => $params[0]], 'The :field field and :other must be different.');
         }
 
         return null;
@@ -931,7 +969,7 @@ class Validator
         $confirmation = $this->data["{$field}_confirmation"] ?? null;
 
         if ($value !== $confirmation) {
-            return "The {$field} confirmation does not match.";
+            return $this->msg('confirmed', $field, [], 'The :field confirmation does not match.');
         }
 
         return null;
@@ -960,13 +998,13 @@ class Validator
         if (static::$presenceVerifier === null && static::$uniqueChecker !== null) {
             // Legacy callback (no ignore support).
             return (static::$uniqueChecker)($table, $column, $value)
-                ? "The {$field} has already been taken."
+                ? $this->msg('unique', $field, [], 'The :field has already been taken.')
                 : null;
         }
 
         $count = $this->verifier('unique')->count($table, $column, [$value], $ignore === null ? null : $ignoreColumn, $ignore);
 
-        return $count > 0 ? "The {$field} has already been taken." : null;
+        return $count > 0 ? $this->msg('unique', $field, [], 'The :field has already been taken.') : null;
     }
 
     /** @param array<int, string> $params */
@@ -989,12 +1027,12 @@ class Validator
         ))) : [$value];
 
         if (is_array($value) && in_array('', $values, true)) {
-            return "The selected {$field} is invalid.";
+            return $this->msg('selected', $field, [], 'The selected :field is invalid.');
         }
 
         $count = $this->verifier('exists')->count($table, $column, $values);
 
-        return $count >= count($values) ? null : "The selected {$field} is invalid.";
+        return $count >= count($values) ? null : $this->msg('selected', $field, [], 'The selected :field is invalid.');
     }
 
     private function validateFile(string $field, mixed $value): ?string
@@ -1004,10 +1042,10 @@ class Validator
         }
 
         if (self::isFileArray($value) && (int) $value['error'] !== UPLOAD_ERR_OK) {
-            return "The {$field} failed to upload.";
+            return $this->msg('uploaded', $field, [], 'The :field failed to upload.');
         }
 
-        return $this->isValidUpload($value) ? null : "The {$field} field must be a file.";
+        return $this->isValidUpload($value) ? null : $this->msg('file', $field, [], 'The :field field must be a file.');
     }
 
     private function validateImage(string $field, mixed $value): ?string
@@ -1022,7 +1060,7 @@ class Validator
             ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp']
         );
 
-        return $ok ? null : "The {$field} field must be an image.";
+        return $ok ? null : $this->msg('image', $field, [], 'The :field field must be an image.');
     }
 
     /** @param array<int, string> $params */
@@ -1042,7 +1080,7 @@ class Validator
 
         $ok = $this->isValidUpload($value) && $this->fileMatches($value, $mimes, $extensions);
 
-        return $ok ? null : "The {$field} field must be a file of type: " . implode(', ', $extensions) . '.';
+        return $ok ? null : $this->msg('mimes', $field, ['values' => implode(', ', $extensions)], 'The :field field must be a file of type: :values.');
     }
 
     /**

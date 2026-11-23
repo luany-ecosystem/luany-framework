@@ -19,6 +19,7 @@ class ValidateHelperSecurityTest extends TestCase
 
     protected function setUp(): void
     {
+        \Luany\Framework\Validation\Validator::setTranslator(null);
         $this->server  = $_SERVER;
         $this->flashed = [];
 

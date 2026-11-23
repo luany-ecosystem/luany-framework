@@ -18,6 +18,11 @@ namespace Luany\Framework\Support;
  *   2. Accept-Language HTTP header  — browser preference
  *   3. config('app.locale')         — application default (APP_LOCALE when unset)
  *   4. 'en'                         — hardcoded fallback
+ *
+ * Regional locales fall back to their language, then to the fallback
+ * locale: pt_AO → pt → en. Only what differs goes in lang/pt_AO.php.
+ * Packages may ship default tables (the framework ships validation
+ * messages in pt and pt_BR); the application's files override them.
  */
 class Translator
 {
@@ -32,19 +37,25 @@ class Translator
     /** @var array<int, string> */
     private array $supported;
 
+    /** @var array<int, string> Directories with default tables, loaded before lang/. */
+    private array $defaultPaths;
+
     /**
      * When $locale is not in $supported, the initial locale is $fallback if it
      * is supported, otherwise the first supported locale. An empty $supported
      * list leaves $locale active (and setLocale() then rejects every change).
      *
      * @param array<int, string> $supported
+     * @param array<int, string> $defaultPaths Directories with default tables (overridden by lang/)
      */
     public function __construct(
         string $langPath,
         string $locale    = 'en',
         string $fallback  = 'en',
         array  $supported = ['en'],
+        array  $defaultPaths = [],
     ) {
+        $this->defaultPaths = $defaultPaths;
         $this->langPath  = rtrim($langPath, '/\\');
         $this->fallback  = $fallback;
         $this->supported = $supported;
@@ -68,15 +79,48 @@ class Translator
     /** @param array<string, string> $replace */
     public function get(string $key, array $replace = []): string
     {
-        $value = $this->tables[$this->locale][$key]
-              ?? $this->tables[$this->fallback][$key]
-              ?? $key;
+        $value = $key;
+        foreach ($this->chain() as $locale) {
+            if (isset($this->tables[$locale][$key])) {
+                $value = $this->tables[$locale][$key];
+                break;
+            }
+        }
 
         foreach ($replace as $placeholder => $replacement) {
             $value = str_replace(':' . $placeholder, (string) $replacement, $value);
         }
 
         return $value;
+    }
+
+    /** Whether a translation exists for $key along the locale chain. */
+    public function has(string $key): bool
+    {
+        foreach ($this->chain() as $locale) {
+            if (isset($this->tables[$locale][$key])) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Locales searched, in order: pt_AO → pt → fallback (→ its language).
+     *
+     * @return list<string>
+     */
+    public function chain(): array
+    {
+        $chain = [];
+        foreach ([$this->locale, $this->fallback] as $locale) {
+            $chain[] = $locale;
+            $language = strtolower((string) preg_split('/[_-]/', $locale)[0]);
+            $chain[] = $language;
+        }
+
+        return array_values(array_unique($chain));
     }
 
     /**
@@ -95,11 +139,10 @@ class Translator
     private function activate(string $locale): void
     {
         $this->locale = $locale;
-        $this->load($locale);
 
-        // Always keep fallback loaded so get() never needs a guard.
-        if ($locale !== $this->fallback) {
-            $this->load($this->fallback);
+        // Keep the whole chain loaded so get() never needs a guard.
+        foreach ($this->chain() as $each) {
+            $this->load($each);
         }
     }
 
@@ -133,15 +176,22 @@ class Translator
             return;
         }
 
-        $path = $this->langPath . '/' . $locale . '.php';
-
-        if (!file_exists($path)) {
+        if (preg_match('/^[A-Za-z]{2,3}([_-][A-Za-z0-9]{2,8})?$/', $locale) !== 1) {
             $this->tables[$locale] = [];
             return;
         }
 
-        $data = require $path;
+        $table = [];
+        foreach ([...$this->defaultPaths, $this->langPath] as $dir) {
+            $path = rtrim($dir, '/\\') . '/' . $locale . '.php';
+            if (is_file($path)) {
+                $data = require $path;
+                if (is_array($data)) {
+                    $table = array_merge($table, $data);
+                }
+            }
+        }
 
-        $this->tables[$locale] = is_array($data) ? $data : [];
+        $this->tables[$locale] = $table;
     }
 }

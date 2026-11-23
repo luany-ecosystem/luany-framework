@@ -12,6 +12,12 @@ use PHPUnit\Framework\TestCase;
  */
 class ValidatorRulesTest extends TestCase
 {
+    protected function setUp(): void
+    {
+        parent::setUp();
+        \Luany\Framework\Validation\Validator::setTranslator(null);
+    }
+
     protected function tearDown(): void
     {
         Validator::flushExtensions();

@@ -9,6 +9,12 @@ use PHPUnit\Framework\TestCase;
  */
 class ValidatorTest extends TestCase
 {
+    protected function setUp(): void
+    {
+        parent::setUp();
+        \Luany\Framework\Validation\Validator::setTranslator(null);
+    }
+
     protected function tearDown(): void
     {
         // Reset unique checker between tests
