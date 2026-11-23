@@ -6,7 +6,7 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
-## [Unreleased]
+## [1.10.0] — 2026-11-23
 
 ### Added
 - **Email** (`Luany\Framework\Mail`): `app('mailer')` / `mailer()`:
