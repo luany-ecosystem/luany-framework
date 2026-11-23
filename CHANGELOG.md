@@ -6,6 +6,12 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [Unreleased]
+
+### Fixed
+- `AfterResponse`: the session is saved and closed before deferred work runs, so its lock no longer holds the user's other requests during an SMTP send.
+- `AfterResponse`: a failed job is logged as class and message only — never the exception object, whose stack trace can carry the job's arguments (such as a password reset token).
+
 ## [1.12.0] — 2026-11-23
 
 ### Added
