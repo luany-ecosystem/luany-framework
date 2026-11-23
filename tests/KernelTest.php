@@ -121,6 +121,15 @@ class KernelTest extends TestCase
         }
     }
 
+    public function test_boot_registers_auth_and_hash(): void
+    {
+        (new TestKernel($this->app))->boot();
+
+        $this->assertInstanceOf(\Luany\Framework\Auth\AuthManager::class, $this->app->make('auth'));
+        $this->assertInstanceOf(\Luany\Framework\Auth\Hasher::class, $this->app->make('hash'));
+        $this->assertSame($this->app->make('auth'), auth());
+    }
+
     // ── handle — no routes ───────────────────────────────────────────────────
 
     public function test_handle_returns_404_for_unregistered_route(): void

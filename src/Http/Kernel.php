@@ -24,6 +24,9 @@ use Luany\Framework\Support\Translator;
 use Luany\Framework\Validation\DatabasePresenceVerifier;
 use Luany\Framework\Validation\Validator;
 use Luany\Lte\Engine;
+use Luany\Framework\Auth\AuthManager;
+use Luany\Framework\Auth\Hasher;
+use Luany\Framework\Auth\ModelUserProvider;
 use Psr\Log\LoggerInterface;
 
 /**
@@ -96,6 +99,7 @@ class Kernel implements KernelInterface
         $this->registerConfig();
         $this->registerSession();
         $this->registerCsrf();
+        $this->registerAuth();
         $this->registerLte();
         $this->registerTranslator();
         $this->registerLogger();
@@ -434,6 +438,39 @@ class Kernel implements KernelInterface
         });
     }
 
+    /**
+     * Session authentication — auth(), app('hash').
+     *
+     * Optional config/auth.php: model (default App\Models\User), login
+     * (path guests are sent to, default /login), home (default /).
+     */
+    private function registerAuth(): void
+    {
+        $this->registerDefault('hash', Hasher::class, fn () => new Hasher());
+
+        $this->registerDefault('auth', AuthManager::class, function (Application $app) {
+            $config = $app->make('config');
+            $model  = $config instanceof Config ? $config->get('auth.model', 'App\\Models\\User') : 'App\\Models\\User';
+
+            $session = $app->make('session');
+            $hasher  = $app->make('hash');
+            if (!$session instanceof SessionInterface || !$hasher instanceof Hasher) {
+                throw new \RuntimeException('auth needs the [session] and [hash] services.');
+            }
+
+            $auth = new AuthManager($session, new ModelUserProvider(is_string($model) ? $model : 'App\\Models\\User'), $hasher);
+            // A new session gets a new CSRF token.
+            $auth->onSessionChange(function () use ($app): void {
+                $csrf = $app->make('csrf');
+                if ($csrf instanceof CsrfToken) {
+                    $csrf->regenerate();
+                }
+            });
+
+            return $auth;
+        });
+    }
+
     private function registerLte(): void
     {
         $this->registerDefault('view', Engine::class, function () {
@@ -552,6 +589,13 @@ class Kernel implements KernelInterface
     {
         if (class_exists(\Luany\Lte\Runtime::class)) {
             \Luany\Lte\Runtime::setDebug($this->isDebug());
+            // @auth / @guest (and @autenticado / @visitante) follow auth()->check().
+            $app = $this->app;
+            \Luany\Lte\Runtime::setAuthResolver(static function () use ($app): bool {
+                $auth = $app->make('auth');
+
+                return $auth instanceof AuthManager && $auth->check();
+            });
         }
     }
 
