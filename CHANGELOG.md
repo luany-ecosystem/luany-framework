@@ -6,6 +6,17 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [Unreleased]
+
+### Added
+- **Session authentication** (`Luany\Framework\Auth`):
+  - `auth()` → `AuthManager`: `attempt(['email' => …, 'password' => …])`, `validate()`, `login($user)`, `logout()`, `user()`, `id()`, `check()`, `guest()`, `intended($default)`.
+  - The session id is regenerated and the CSRF token rotated on login and logout; unknown users are checked against a dummy hash (no user enumeration by timing); array input never matches; old hashes are upgraded on login.
+  - `Hasher` (`app('hash')`): Argon2id when available, bcrypt otherwise; `make()`, `check()`, `needsRehash()`.
+  - `ModelUserProvider`: users from a luany/database model (`config('auth.model')`, default `App\Models\User`) with a `password` column; `UserProvider` interface for other stores.
+  - Middleware `Authenticate` (guests → 401 JSON or redirect to `config('auth.login')`, default `/login`, remembering the page) and `RedirectIfAuthenticated` (→ `config('auth.home')`, default `/`).
+  - LTE `@auth` / `@guest` (and `@autenticado` / `@visitante`) now follow `auth()->check()`.
+
 ## [1.8.0] — 2026-11-22
 
 ### Added

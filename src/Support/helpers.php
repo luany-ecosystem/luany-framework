@@ -456,3 +456,19 @@ if (!function_exists('get_flash')) {
         return ['type' => (string) $flash['type'], 'message' => (string) $flash['message']];
     }
 }
+
+if (!function_exists('auth')) {
+    /**
+     * The session guard: auth()->attempt([...]), auth()->user(), auth()->check(),
+     * auth()->logout().
+     */
+    function auth(): \Luany\Framework\Auth\AuthManager
+    {
+        $auth = app('auth');
+        if (!$auth instanceof \Luany\Framework\Auth\AuthManager) {
+            throw new \RuntimeException('Container entry [auth] must be a ' . \Luany\Framework\Auth\AuthManager::class . ' instance.');
+        }
+
+        return $auth;
+    }
+}
