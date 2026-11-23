@@ -29,10 +29,19 @@ final class AfterResponse
         }
     }
 
-    /** Close the connection (when PHP-FPM allows it), then run the jobs. */
+    /**
+     * Save and close the session (its lock must not wait for an SMTP send),
+     * close the connection when PHP-FPM allows it, then run the jobs.
+     */
     public static function flush(): void
     {
-        if (self::$jobs !== [] && function_exists('fastcgi_finish_request')) {
+        if (self::$jobs === []) {
+            return;
+        }
+        if (session_status() === PHP_SESSION_ACTIVE) {
+            session_write_close();
+        }
+        if (function_exists('fastcgi_finish_request')) {
             fastcgi_finish_request();
         }
 
@@ -40,16 +49,19 @@ final class AfterResponse
             try {
                 $job();
             } catch (\Throwable $e) {
-                // The response is gone: the error can only be logged.
+                // The response is gone: the error can only be logged. Only the
+                // class and message — never the exception itself, whose trace
+                // carries the job's arguments (a reset token, for example).
+                $line = 'Deferred job failed: ' . get_class($e) . ': ' . $e->getMessage();
                 try {
                     $logger = app('log');
                     if ($logger instanceof \Psr\Log\LoggerInterface) {
-                        $logger->error('Deferred job failed: ' . $e->getMessage(), ['exception' => $e]);
+                        $logger->error($line);
                         continue;
                     }
                 } catch (\Throwable) {
                 }
-                error_log('Luany deferred job failed: ' . $e->getMessage());
+                error_log('Luany ' . $line);
             }
         }
     }
