@@ -166,6 +166,26 @@ class KernelTest extends TestCase
         }
     }
 
+    public function test_trusted_proxies_from_env(): void
+    {
+        $_ENV['TRUSTED_PROXIES'] = '10.0.0.0/8, 127.0.0.1';
+        putenv('TRUSTED_PROXIES=10.0.0.0/8, 127.0.0.1');
+        try {
+            (new TestKernel($this->app))->boot();
+            $this->assertSame(['10.0.0.0/8', '127.0.0.1'], \Luany\Core\Http\Request::getTrustedProxies());
+
+            $viaProxy = new \Luany\Core\Http\Request('POST', '/forgot-password', [], [], [], [], ['REMOTE_ADDR' => '10.1.2.3', 'HTTP_X_FORWARDED_FOR' => '41.63.1.9']);
+            $this->assertSame('41.63.1.9', $viaProxy->ip());
+
+            $direct = new \Luany\Core\Http\Request('POST', '/forgot-password', [], [], [], [], ['REMOTE_ADDR' => '41.63.1.9', 'HTTP_X_FORWARDED_FOR' => '1.1.1.1']);
+            $this->assertSame('41.63.1.9', $direct->ip(), 'spoofed header from an untrusted client is ignored');
+        } finally {
+            unset($_ENV['TRUSTED_PROXIES']);
+            putenv('TRUSTED_PROXIES');
+            \Luany\Core\Http\Request::setTrustedProxies([]);
+        }
+    }
+
     // ── handle — no routes ───────────────────────────────────────────────────
 
     public function test_handle_returns_404_for_unregistered_route(): void

@@ -19,8 +19,10 @@ use Luany\Core\RateLimit\RateLimiterInterface;
  * Tokens: 64 random hex characters, stored only as SHA-256, compared with
  * hash_equals(), single use, valid 60 minutes, one per user (a new one
  * replaces the old), and void as soon as the password changes by any other
- * route (the row keeps a fingerprint of the password hash). Requests are
- * limited per email and per IP.
+ * route (the row keeps a SHA-256 of the password hash, never the hash
+ * itself). Requests are limited per email and per IP — pass $request->ip(),
+ * which follows X-Forwarded-For only from TRUSTED_PROXIES. Under PHP-FPM the
+ * token and the email are made after the response (no timing difference).
  */
 final class PasswordBroker
 {
@@ -38,6 +40,7 @@ final class PasswordBroker
         private int $perEmail = 3,
         private int $perIp = 10,
         private int $window = 900,
+        private ?\Closure $defer = null,
     ) {
     }
 
@@ -61,7 +64,11 @@ final class PasswordBroker
 
         $user = $this->users->retrieveByCredentials($credentials);
         if ($user !== null) {
-            $send($user, $this->createToken($user));
+            $job = fn () => $send($user, $this->createToken($user));
+            // With a deferrer (the Kernel uses AfterResponse) the token and the
+            // email are made after the answer is sent: the response time is the
+            // same whether or not the account exists.
+            $this->defer !== null ? ($this->defer)($job) : $job();
         }
 
         // Same answer whether or not the user exists.

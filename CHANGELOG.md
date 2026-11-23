@@ -6,6 +6,15 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [Unreleased]
+
+### Added
+- `AfterResponse::run($job)`: work that runs after the response is sent (under PHP-FPM the connection is closed first with `fastcgi_finish_request()`; failures are logged).
+- `TRUSTED_PROXIES` (or `config('app.trusted_proxies')`): IPs / CIDR ranges whose `X-Forwarded-For` is honoured by `$request->ip()` — so rate limits count the real client behind a load balancer. Empty by default: the connecting address is used and the header is ignored.
+
+### Changed
+- Password reset: when the account exists, the token and the email are made after the response (`AfterResponse`), so the response time no longer depends on whether the email exists. Without PHP-FPM the work still runs after the script, but the client may wait for it.
+
 ## [1.11.0] — 2026-11-23
 
 ### Added
