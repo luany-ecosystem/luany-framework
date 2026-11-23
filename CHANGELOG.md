@@ -6,6 +6,14 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [Unreleased]
+
+### Added
+- **Password reset** — `app('auth.passwords')` (`PasswordBroker`): `sendResetLink(['email' => …], $ip, fn ($user, $token) => …)` and `reset(['email' => …, 'token' => …, 'password' => …])`. Tokens are 64 random hex characters stored only as SHA-256 (`password_reset_tokens` table, `DatabaseTokenRepository::createTableSql()`), compared with `hash_equals()`, single use, valid 60 minutes, one per user, and void once the password changes by any other route. The request answer never reveals whether the email exists; requests are limited per email (3 / 15 min) and per IP (10 / 15 min).
+- **Signed URLs** — `app('url.signer')` (`SignedUrl`): HMAC-SHA256 with a sub-key of the `APP_KEY`, covering the path, every parameter and the expiry. Rotating the `APP_KEY` invalidates links already sent.
+- **Email verification** — `app('auth.verification')` (`EmailVerification`): `url($userId, $email)` / `verify($request, $userId, $currentEmail)`; links expire in 1 hour and are bound to the user id and a hash of the current email.
+- Middleware `ValidateSignature` (403 on a bad or expired signature; always sends `Referrer-Policy: no-referrer`) and `EnsureEmailIsVerified` (`email_verified_at`; 403 JSON or redirect to `config('auth.verify_notice')`).
+
 ## [1.10.0] — 2026-11-23
 
 ### Added

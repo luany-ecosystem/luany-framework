@@ -26,7 +26,13 @@ use Luany\Framework\Validation\Validator;
 use Luany\Lte\Engine;
 use Luany\Framework\Auth\AuthManager;
 use Luany\Framework\Auth\Hasher;
+use Luany\Framework\Auth\DatabaseTokenRepository;
+use Luany\Framework\Auth\EmailVerification;
 use Luany\Framework\Auth\ModelUserProvider;
+use Luany\Framework\Auth\PasswordBroker;
+use Luany\Framework\Http\Middleware\Authenticate;
+use Luany\Framework\Security\SignedUrl;
+use Luany\Core\RateLimit\FileRateLimiter;
 use Luany\Framework\Mail\Address;
 use Luany\Framework\Mail\MailException;
 use Luany\Framework\Mail\Mailer;
@@ -476,6 +482,61 @@ class Kernel implements KernelInterface
 
             return $auth;
         });
+
+        // Signed URLs with the APP_KEY (resolved on first use).
+        $this->registerDefault('url.signer', SignedUrl::class, function (Application $app) {
+            $config = $app->make('config');
+            $key = $config instanceof Config ? $config->get('app.key') : null;
+
+            return new SignedUrl((string) ($key ?? env('APP_KEY', '')));
+        });
+
+        $this->registerDefault('auth.verification', EmailVerification::class, function (Application $app) {
+            $signer = $app->make('url.signer');
+            if (!$signer instanceof SignedUrl) {
+                throw new \RuntimeException('Container entry [url.signer] must be a ' . SignedUrl::class . ' instance.');
+            }
+
+            return new EmailVerification($signer, Authenticate::setting('auth.verify_path', '/email/verify'));
+        });
+
+        // Password reset tokens in the password_reset_tokens table of the 'db' connection.
+        $this->registerDefault('auth.passwords', PasswordBroker::class, function (Application $app) {
+            $auth   = $app->make('auth');
+            $hasher = $app->make('hash');
+            if (!$auth instanceof AuthManager || !$hasher instanceof Hasher) {
+                throw new \RuntimeException('auth.passwords needs the [auth] and [hash] services.');
+            }
+
+            return new PasswordBroker(
+                $auth->provider(),
+                $hasher,
+                new DatabaseTokenRepository($this->pdo()),
+                new FileRateLimiter($app->storagePath('rate-limits')),
+            );
+        });
+    }
+
+    /** The application's PDO ('db', 'connection' or PDO binding). */
+    private function pdo(): \PDO
+    {
+        foreach (['db', 'connection', \PDO::class] as $id) {
+            if (!$this->app->has($id)) {
+                continue;
+            }
+            $entry = $this->app->make($id);
+            if ($entry instanceof \PDO) {
+                return $entry;
+            }
+            if (is_object($entry) && method_exists($entry, 'getPdo')) {
+                $pdo = $entry->getPdo();
+                if ($pdo instanceof \PDO) {
+                    return $pdo;
+                }
+            }
+        }
+
+        throw new \LogicException('No PDO connection: bind [db] to use password reset tokens.');
     }
 
     /**
