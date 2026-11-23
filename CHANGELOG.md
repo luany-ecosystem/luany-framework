@@ -6,7 +6,7 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
-## [Unreleased]
+## [1.12.0] — 2026-11-23
 
 ### Added
 - `AfterResponse::run($job)`: work that runs after the response is sent (under PHP-FPM the connection is closed first with `fastcgi_finish_request()`; failures are logged).
