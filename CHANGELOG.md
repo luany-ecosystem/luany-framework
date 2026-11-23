@@ -6,7 +6,7 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
-## [Unreleased]
+## [1.14.0] — 2026-11-23
 
 ### Added
 - **Dates in the app's locale**: `format_date($value, $style)` (`DateFormatter`). Styles `short`, `medium`, `long`, `full`, `time`, `datetime` — in Portuguese `23/11/2026`, `23 nov 2026`, `23 de novembro de 2026`, `segunda-feira, 23 de novembro de 2026`, `14:05`, `23/11/2026 14:05`. Portuguese and English use built-in tables (same result on every server); other locales use ext-intl when installed. Accepts `DateTimeInterface`, date strings and timestamps; uses the app timezone; `null`/`''` give `''`.
