@@ -6,7 +6,7 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
-## [Unreleased]
+## [1.12.1] — 2026-11-23
 
 ### Fixed
 - `AfterResponse`: the session is saved and closed before deferred work runs, so its lock no longer holds the user's other requests during an SMTP send.
