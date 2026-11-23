@@ -6,7 +6,7 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
-## [Unreleased]
+## [1.13.0] — 2026-11-23
 
 ### Added
 - **Translated validation messages**: every message is a `validation.*` key (`validation.required`, `validation.min.string`, `validation.between.numeric`…) looked up in the app's locale, with the English text as default. The framework ships Portuguese tables (`resources/lang/pt.php`, `pt_BR.php`); the app's `lang/{locale}.php` overrides any line. `Validator::setTranslator()` for other setups.
