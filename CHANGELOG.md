@@ -6,7 +6,7 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
-## [Unreleased]
+## [1.9.0] — 2026-11-23
 
 ### Added
 - **Session authentication** (`Luany\Framework\Auth`):
