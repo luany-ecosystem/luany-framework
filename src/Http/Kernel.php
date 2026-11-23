@@ -19,6 +19,7 @@ use Luany\Framework\Exceptions\ValidationException;
 use Luany\Framework\Security\CsrfToken;
 use Luany\Framework\Session\FileSession;
 use Luany\Framework\Log\FileLogger;
+use Luany\Framework\Support\AfterResponse;
 use Luany\Framework\Support\Config;
 use Luany\Framework\Support\Translator;
 use Luany\Framework\Validation\DatabasePresenceVerifier;
@@ -109,6 +110,7 @@ class Kernel implements KernelInterface
         }
 
         $this->registerConfig();
+        $this->configureTrustedProxies();
         $this->registerSession();
         $this->registerCsrf();
         $this->registerAuth();
@@ -426,6 +428,30 @@ class Kernel implements KernelInterface
         });
     }
 
+    /**
+     * Proxies whose X-Forwarded-For is trusted for $request->ip() (rate limits,
+     * logs): config('app.trusted_proxies') or TRUSTED_PROXIES — IPs or CIDR
+     * ranges, comma-separated. Empty (default): the connecting address is used.
+     */
+    private function configureTrustedProxies(): void
+    {
+        $config  = $this->app->make('config');
+        $proxies = $config instanceof Config ? $config->get('app.trusted_proxies') : null;
+        $proxies ??= env('TRUSTED_PROXIES', '');
+
+        if (is_string($proxies)) {
+            $proxies = explode(',', $proxies);
+        }
+        if (!is_array($proxies)) {
+            return;
+        }
+
+        $proxies = array_values(array_filter(array_map(fn ($p): string => trim((string) $p), $proxies), fn (string $p): bool => $p !== ''));
+        if ($proxies !== []) {
+            Request::setTrustedProxies($proxies);
+        }
+    }
+
     private function registerSession(): void
     {
         $this->registerDefault('session', SessionInterface::class, function (Application $app) {
@@ -513,6 +539,7 @@ class Kernel implements KernelInterface
                 $hasher,
                 new DatabaseTokenRepository($this->pdo()),
                 new FileRateLimiter($app->storagePath('rate-limits')),
+                defer: static fn (callable $job) => AfterResponse::run($job),
             );
         });
     }

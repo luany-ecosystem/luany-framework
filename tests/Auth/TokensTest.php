@@ -146,6 +146,34 @@ class TokensTest extends TestCase
         $this->assertSame(PasswordBroker::THROTTLED, $this->requestLink($broker, 'novo@luany.dev', '10.9.9.9')[0], 'per IP');
     }
 
+    public function test_token_and_email_can_wait_until_after_the_response(): void
+    {
+        $jobs   = [];
+        $broker = new PasswordBroker(new ModelUserProvider(FakeUser::class), $this->hasher, $this->repo,
+            defer: function (callable $job) use (&$jobs): void { $jobs[] = $job; });
+
+        [$status, $token] = $this->requestLink($broker, 'ana@luany.dev');
+        $this->assertSame(PasswordBroker::RESET_LINK_SENT, $status);
+        $this->assertNull($token, 'nothing sent before the response');
+        $this->assertNull($this->repo->find('1'), 'no token written before the response');
+        $this->assertCount(1, $jobs);
+
+        $this->requestLink($broker, 'ninguem@luany.dev');
+        $this->assertCount(1, $jobs, 'unknown email: no job, same answer');
+
+        $jobs[0]();
+        $this->assertNotNull($this->repo->find('1'));
+    }
+
+    public function test_the_fingerprint_is_not_the_password_hash(): void
+    {
+        $this->requestLink($this->broker(), 'ana@luany.dev');
+        $row = $this->repo->find('1');
+
+        $this->assertNotSame(FakeUser::$rows[1]['password'], $row['password_fingerprint']);
+        $this->assertSame(hash('sha256', FakeUser::$rows[1]['password']), $row['password_fingerprint']);
+    }
+
     public function test_signed_urls(): void
     {
         $signer = new SignedUrl(self::KEY);
