@@ -784,7 +784,17 @@ class Kernel implements KernelInterface
             }
             $supported = array_values(array_unique(array_filter(array_map('strval', $supported), fn ($l) => $l !== '')));
 
-            return new Translator($app->langPath(), $locale, $fallback, $supported);
+            // The framework's own tables (validation messages in pt, pt_BR) sit
+            // under the app's lang/ files, which override them.
+            return new Translator($app->langPath(), $locale, $fallback, $supported, [dirname(__DIR__, 2) . '/resources/lang']);
+        });
+
+        // Validation messages follow the app's locale (validation.* keys).
+        $app = $this->app;
+        Validator::setTranslator(static function (string $key, array $replace) use ($app): ?string {
+            $translator = $app->make('translator');
+
+            return $translator instanceof Translator && $translator->has($key) ? $translator->get($key, $replace) : null;
         });
     }
 

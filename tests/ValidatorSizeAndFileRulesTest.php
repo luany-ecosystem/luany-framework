@@ -16,6 +16,7 @@ class ValidatorSizeAndFileRulesTest extends TestCase
 
     protected function setUp(): void
     {
+        \Luany\Framework\Validation\Validator::setTranslator(null);
         // Test fixtures are not real HTTP uploads.
         Validator::setUploadedFileVerifier(fn (string $path) => is_file($path));
     }

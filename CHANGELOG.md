@@ -6,6 +6,15 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [Unreleased]
+
+### Added
+- **Translated validation messages**: every message is a `validation.*` key (`validation.required`, `validation.min.string`, `validation.between.numeric`…) looked up in the app's locale, with the English text as default. The framework ships Portuguese tables (`resources/lang/pt.php`, `pt_BR.php`); the app's `lang/{locale}.php` overrides any line. `Validator::setTranslator()` for other setups.
+- **Locale chain**: a regional locale falls back to its language, then to the fallback locale — `pt_AO` → `pt` → `en` — so `lang/pt_AO.php` only holds what differs. `Translator::has()`, `Translator::chain()`; packages can ship default tables (`$defaultPaths`).
+
+### Security
+- `Translator` only loads files for well-formed locale names (`pt`, `pt_AO`, `pt-BR`…).
+
 ## [1.12.1] — 2026-11-23
 
 ### Fixed

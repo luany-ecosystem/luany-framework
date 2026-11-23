@@ -10,6 +10,12 @@ use PHPUnit\Framework\TestCase;
  */
 class ValidatorPortugueseRulesTest extends TestCase
 {
+    protected function setUp(): void
+    {
+        parent::setUp();
+        \Luany\Framework\Validation\Validator::setTranslator(null);
+    }
+
     protected function tearDown(): void
     {
         Validator::flushExtensions();
