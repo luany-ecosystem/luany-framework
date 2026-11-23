@@ -151,6 +151,21 @@ class KernelTest extends TestCase
         }
     }
 
+    public function test_boot_registers_signed_urls_and_email_verification(): void
+    {
+        $_ENV['APP_KEY'] = 'base64:' . base64_encode(random_bytes(32));
+        putenv('APP_KEY=' . $_ENV['APP_KEY']);
+        try {
+            (new TestKernel($this->app))->boot();
+            $this->assertInstanceOf(\Luany\Framework\Security\SignedUrl::class, $this->app->make('url.signer'));
+            $url = $this->app->make('auth.verification')->url(7, 'a@b.co');
+            $this->assertStringStartsWith('/email/verify?', $url);
+        } finally {
+            unset($_ENV['APP_KEY']);
+            putenv('APP_KEY');
+        }
+    }
+
     // ── handle — no routes ───────────────────────────────────────────────────
 
     public function test_handle_returns_404_for_unregistered_route(): void
